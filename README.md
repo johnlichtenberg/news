@@ -11,6 +11,8 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
   When the same story is in an NYT section feed, the page keeps the section feed's time, summary and nytimes.com
   link and opens the exact ProQuest article. ProQuest-only stories show under the "ProQuest" section with a date.
+- WSJ likewise uses John's ProQuest alert `https://feeds.proquest.com/rss/2310287` (feed id `wsj-proquest`). Its titles
+  are "Headline; subhead"; only the headline before the first "; " is kept.
 - No article text is fetched, stored, or shown by this site.
 - The header links open the Arlington Public Library's NYT and WSJ access (ProQuest, card + PIN).
 - Library link format (`libraryLink` in `docs/lib.js`):

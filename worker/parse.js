@@ -104,7 +104,9 @@ export function parseProquest(xml, feed, limit = 100) {
   const items = String(xml || "").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item\s*>/gi) || [];
   for (const block of items) {
     if (out.length >= limit) break;
-    const title = plainText(tag(block, "title"), 300).replace(/^ProQuest:\s*/i, "");
+    let title = plainText(tag(block, "title"), 600).replace(/^ProQuest:\s*/i, "");
+    if (feed.subheadSep && title.includes(feed.subheadSep)) title = title.slice(0, title.indexOf(feed.subheadSep)).trim();
+    if (title.length > 300) title = title.slice(0, 299).replace(/\s+\S*$/, "") + "\u2026";
     const link = proquestLink(tag(block, "link"));
     if (!title || !link) continue; // skips the "View ProQuest search results" item
     out.push({ paper: feed.paper, section: feed.section, title, description: "", link,

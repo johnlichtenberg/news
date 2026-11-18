@@ -26,6 +26,9 @@ export const FEEDS = [
   { id: "wsj-tech",      paper: "WSJ", section: "Tech",             url: "https://feeds.content.dowjones.io/public/rss/RSSWSJD" },
   { id: "wsj-opinion",   paper: "WSJ", section: "Opinion",          url: "https://feeds.content.dowjones.io/public/rss/RSSOpinion" },
   { id: "wsj-arts",      paper: "WSJ", section: "Arts",             url: "https://feeds.content.dowjones.io/public/rss/RSSArtsCulture" },
+  // John's ProQuest RSS alert for "Wall Street Journal (Online)". Its titles are "Headline; subhead", so only
+  // the part before the first "; " is kept.
+  { id: "wsj-proquest",  paper: "WSJ", section: "ProQuest",         url: "https://feeds.proquest.com/rss/2310287", kind: "proquest", subheadSep: "; " },
   { id: "wsj-lifestyle", paper: "WSJ", section: "Lifestyle",        url: "https://feeds.content.dowjones.io/public/rss/RSSLifestyle" },
 ];
 

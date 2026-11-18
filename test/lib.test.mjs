@@ -88,6 +88,31 @@ for (const order of [[{ items: rssNyt }, { items: pqItems }], [{ items: pqItems 
   eq(m.filter((i) => /latest/.test(i.title)).length, 2);
   eq(m.map((i) => i.title).at(-1), "Only In ProQuest Story About Something", "older date-only sorts by its day");
 }
+// WSJ ProQuest alert merges with WSJ section feeds the same way
+const wsjPq = parseProquest(`<rss><channel><item><title>ProQuest:Asian Equities Mixed as Investors Parse Nvidia's Results, Guidance; South Korea leads</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414224050?accountid=57895</link></item>
+<item><title>ProQuest:JGBs Edge Lower Ahead of 20-Year Auction</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414212506?accountid=57895</link></item></channel></rss>`,
+  { paper: "WSJ", section: "ProQuest", subheadSep: "; " });
+const wm = mergeItems([{ items: [{ paper: "WSJ", section: "Markets", title: "Asian Equities Mixed as Investors Parse Nvidia\u2019s Results, Guidance", description: "d", link: "https://www.wsj.com/finance/asian-equities-7041c3ea", published: "2026-11-18T05:33:00.000Z" }] }, { items: wsjPq }]);
+eq(wm.length, 2);
+eq(wm[0].pqLink, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414224050?accountid=57895", "WSJ match gets exact ProQuest link");
+eq(wm[0].link, "https://www.wsj.com/finance/asian-equities-7041c3ea"); eq(wm[0].sections, ["Markets", "ProQuest"]);
+eq(wm[1].paper, "WSJ"); eq(wm[1].link, ""); eq(wm[1].dateOnly, true); eq(wm[1].sections, ["ProQuest"]);
+eq(filterItems(wm, { paper: "WSJ", section: "ProQuest" }).length, 2);
+eq(sectionsFor(wm, "WSJ"), ["Markets", "ProQuest"]);
+
+// subhead glued on with only a space: matched by whole-word headline prefix
+const glued = mergeItems([
+  { items: [{ paper: "WSJ", section: "World", title: "He Runs One of the World\u2019s Deadliest Military Forces. We Went Inside His Bunker.", description: "d", link: "https://www.wsj.com/world/bunker-ba042402", published: "2026-11-18T03:00:00.000Z" },
+    { paper: "WSJ", section: "World", title: "He Runs", description: "", link: "https://www.wsj.com/short", published: "2026-11-18T02:00:00.000Z" }] },
+  { items: [{ paper: "WSJ", section: "ProQuest", source: "proquest", title: "He Runs One of the World's Deadliest Military Forces. We Went Inside His Bunker. Maj. Robert Brovdi is bringing", link: "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414232341?accountid=57895", date: "2026-11-18", published: null },
+    { paper: "NYT", section: "ProQuest", source: "proquest", title: "He Runs One of the World's Deadliest Military Forces. We Went Inside His Bunker. Other paper", link: "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/999999?accountid=57895", date: "2026-11-18", published: null }] }]);
+eq(glued.length, 3, "glued WSJ item merged; other paper never merged");
+const gw = glued.find((i) => i.paper === "WSJ" && i.link === "https://www.wsj.com/world/bunker-ba042402");
+eq(gw.pqLink, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414232341?accountid=57895");
+eq(gw.title, "He Runs One of the World\u2019s Deadliest Military Forces. We Went Inside His Bunker.", "publisher headline shown");
+eq(gw.sections, ["World", "ProQuest"]);
+eq(glued.find((i) => i.title === "He Runs").pqLink, "", "short headline never prefix-matched");
+
 eq(etMidnight("2026-07-04"), Date.parse("2026-07-04T04:00:00Z"), "EDT midnight");
 eq(etMidnight("bad"), NaN);
 eq(etDay(etMidnight("2026-11-18"), now), "today");

@@ -70,13 +70,20 @@ eq(proquestLink("https://www.proquest.com/docview/4242"), "https://library.acces
 eq(proquestLink("https://library.access.arlingtonva.us/login?url=https%3A%2F%2Fwww.proquest.com%2Fnytimes%2Fdocview%2F7777%3Faccountid%3D1"), "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/7777?accountid=57895", "encoded url= and other accountid normalized");
 eq(proquestLink("javascript:alert(1)"), "");
 eq(proquestLink("https://www.proquest.com/docview/abc"), "");
+const wpq = parseProquest(`<rss><channel><item><title>ProQuest:Nvidia Reports Faster Growth, Says Jensen Huang Won't Return as CEO; Interim chief says demand is strong</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414244035?accountid=57895</link></item>
+<item><title>ProQuest:Corrections <![CDATA[&]]> Amplifications</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414224037?accountid=57895</link></item></channel></rss>`,
+  { paper: "WSJ", section: "ProQuest", subheadSep: "; " });
+eq(wpq.map((i) => i.title), ["Nvidia Reports Faster Growth, Says Jensen Huang Won't Return as CEO", "Corrections & Amplifications"], "WSJ subhead dropped");
+eq(wpq[0].paper, "WSJ"); eq(wpq[0].link, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414244035?accountid=57895");
+ok(!JSON.stringify(wpq).includes("Interim chief"), "subhead not kept");
+eq(parseProquest(`<item><title>ProQuest:A; B</title><link>https://www.proquest.com/docview/12345</link></item>`, { paper: "NYT", section: "ProQuest" })[0].title, "A; B", "NYT titles not split");
 eq(proquestDate("Nov 18, 2026"), "2026-11-18"); eq(proquestDate("Sept 3, 2026"), "2026-09-03"); eq(proquestDate("garbage"), null);
 
 // --- whitelist sanity ---
 const ids = new Set();
 for (const f of FEEDS) {
   ok(!ids.has(f.id), "unique id " + f.id); ids.add(f.id);
-  ok(/^https:\/\/(rss\.nytimes\.com|feeds\.content\.dowjones\.io)\//.test(f.url) || f.url === "https://feeds.proquest.com/rss/2310267", "allowed feed host " + f.url);
+  ok(/^https:\/\/(rss\.nytimes\.com|feeds\.content\.dowjones\.io)\//.test(f.url) || ["https://feeds.proquest.com/rss/2310267", "https://feeds.proquest.com/rss/2310287"].includes(f.url), "allowed feed host " + f.url);
   ok(f.paper === "NYT" || f.paper === "WSJ");
 }
 
@@ -112,7 +119,9 @@ r = await worker.fetch(req("/feed/evil"), env); eq(r.status, 404);
 r = await worker.fetch(req("/feed/https%3A%2F%2Fevil.example"), env); eq(r.status, 404);
 r = await worker.fetch(req("/feed?url=https://evil.example"), env); eq(r.status, 404);
 r = await worker.fetch(req("/"), env); eq(r.status, 404);
-eq(calls.length, 3, "nothing outside the whitelist fetched");
+r = await worker.fetch(req("/feed/wsj-proquest"), env); j = await r.json();
+eq(j.ok, true); eq(j.paper, "WSJ"); eq(j.items[0].paper, "WSJ"); eq(calls.at(-1), "https://feeds.proquest.com/rss/2310287");
+eq(calls.length, 4, "nothing outside the whitelist fetched");
 
 r = await worker.fetch(req("/feeds", { origin: "https://evil.example" }), env); eq(r.status, 403);
 eq(r.headers.get("Access-Control-Allow-Origin"), ORIGIN, "never echoes other origins");

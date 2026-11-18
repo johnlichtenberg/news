@@ -65,6 +65,26 @@ export function mergeItems(results) {
       byLink.set(lk, it); if (tk) byTitle.set(tk, it); out.push(it);
     }
   }
+  // ProQuest sometimes glues the subhead onto the headline with just a space ("…His Bunker. Maj. Robert…").
+  // Match such leftovers when a publisher headline (25+ chars) is a whole-word prefix of the ProQuest title.
+  const pubs = out.filter((i) => i.link);
+  const merged = new Set();
+  for (const it of out) {
+    if (it.link || !it.pqLink) continue;
+    const n = normTitle(it.title);
+    let best = null;
+    for (const c of pubs) {
+      if (c.paper !== it.paper || c.pqLink) continue;
+      const cn = normTitle(c.title);
+      if (cn.length >= 25 && n.startsWith(cn + " ") && (!best || cn.length > normTitle(best.title).length)) best = c;
+    }
+    if (best) {
+      best.pqLink = it.pqLink;
+      for (const sct of it.sections) if (!best.sections.includes(sct)) best.sections.push(sct);
+      merged.add(it);
+    }
+  }
+  if (merged.size) out.splice(0, out.length, ...out.filter((i) => !merged.has(i)));
   for (const it of out) it.sections.sort((a, b) => sectionRank(a) - sectionRank(b));
   return out.sort((a, b) => (Number.isFinite(b.time) ? b.time : -Infinity) - (Number.isFinite(a.time) ? a.time : -Infinity)
     || a.title.localeCompare(b.title));
