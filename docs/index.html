@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://news-feeds-relay.johnlichtenberg.workers.dev; base-uri 'none'; form-action 'none'">
+<title>Headlines · NYT &amp; WSJ</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <h1>Headlines</h1>
+    <span id="count" class="count"></span>
+    <button id="refresh" type="button" class="refresh" aria-label="Refresh headlines">&#x21bb;<span class="lbl"> Refresh</span></button>
+  </div>
+  <nav class="library" aria-label="Library access">
+    <span>Library (sign in with card &amp; PIN):</span>
+    <a href="https://library.access.arlingtonva.us/login?url=https://www.proquest.com/nytimes/?accountid=57895" target="_blank" rel="noopener noreferrer">NYT</a>
+    <a href="https://library.access.arlingtonva.us/login?url=https://www.proquest.com/wallstreetjournal/?accountid=57895" target="_blank" rel="noopener noreferrer">WSJ</a>
+  </nav>
+  <div id="papers" class="tabs" role="toolbar" aria-label="Paper">
+    <button type="button" data-paper="All" aria-pressed="true">All</button>
+    <button type="button" data-paper="NYT" aria-pressed="false">NYT</button>
+    <button type="button" data-paper="WSJ" aria-pressed="false">WSJ</button>
+  </div>
+  <div id="sections" class="chips" role="toolbar" aria-label="Section"></div>
+</header>
+<main>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="list" class="list"></div>
+  <p id="empty" class="empty" hidden>No stories here right now.</p>
+  <button id="more" type="button" class="more" hidden>Show more</button>
+  <noscript><p class="empty">This page needs JavaScript to load the headlines.</p></noscript>
+</main>
+<footer class="foot">
+  Headlines and summaries come from the publishers' public RSS feeds. Stories open on nytimes.com and wsj.com.
+  If one is paywalled, open the library link above and search for the headline.
+</footer>
+</body>
+</html>

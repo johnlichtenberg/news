@@ -1,0 +1,6 @@
+{
+  "name": "news-headlines",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node worker/worker.test.mjs && node test/lib.test.mjs" }
+}
