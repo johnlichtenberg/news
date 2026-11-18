@@ -54,13 +54,15 @@ export async function readIndex(kv, feedId) {
   return v && Array.isArray(v.months) ? v.months.filter(isMonth) : [];
 }
 
-// Merge a live batch into storage. Returns { months, current, previous, writes }.
-export async function storeBatch(kv, feedId, fresh, now = Date.now()) {
+// Merge a live batch into storage. `keep` drops items that must never be stored (e.g. NYT en Español); stored
+// items it rejects are removed from the current month's shard on the next write. Returns { months, current, previous, writes }.
+export async function storeBatch(kv, feedId, fresh, now = Date.now(), keep = () => true) {
   const month = monthOf(now), before = prevMonth(month);
-  const [months, shard, previous] = await Promise.all([readIndex(kv, feedId), readShard(kv, feedId, month), readShard(kv, feedId, before)]);
-  const current = fresh ? mergeShard(shard, fresh, previous, now) : shard;
+  const [months, shard, prevShard] = await Promise.all([readIndex(kv, feedId), readShard(kv, feedId, month), readShard(kv, feedId, before)]);
+  const previous = prevShard.filter(keep);
+  const current = (fresh ? mergeShard(shard, fresh.filter(keep), prevShard, now) : shard).filter(keep);
   let writes = 0;
-  if (kv && fresh && changed(shard, current)) {
+  if (kv && (fresh || current.length !== shard.length) && changed(shard, current)) {
     await kv.put(shardKey(feedId, month), JSON.stringify({ updated: new Date(now).toISOString(), items: current }));
     writes++;
   }
@@ -71,4 +73,14 @@ export async function storeBatch(kv, feedId, fresh, now = Date.now()) {
     writes++;
   }
   return { months: allMonths, month, current, previousMonth: before, previous, writes };
+}
+
+// Rewrite one stored month without the items `keep` rejects. Returns how many were removed.
+export async function purgeShard(kv, feedId, month, keep, now = Date.now()) {
+  const items = await readShard(kv, feedId, month);
+  const kept = items.filter(keep);
+  if (kept.length !== items.length) {
+    await kv.put(`hist:${feedId}:${month}`, JSON.stringify({ updated: new Date(now).toISOString(), items: kept }));
+  }
+  return items.length - kept.length;
 }

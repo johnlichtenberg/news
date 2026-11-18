@@ -1,6 +1,7 @@
 // Minimal parser for ProQuest RSS alert feeds. Keeps only each item's headline, date and article link,
 // as plain text. Never reads descriptions, abstracts, or full text.
 import { LIBRARY_LOGIN, PROQUEST_ACCOUNT } from "./feeds.js";
+import { isSpanishTitle } from "./lang.js";
 
 const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rsquo: "\u2019", lsquo: "\u2018",
   rdquo: "\u201d", ldquo: "\u201c", mdash: "\u2014", ndash: "\u2013", hellip: "\u2026", eacute: "\u00e9" };
@@ -73,9 +74,13 @@ export function parseProquest(xml, feed, limit = 100) {
     if (title.length > 300) title = title.slice(0, 299).replace(/\s+\S*$/, "") + "\u2026";
     const link = proquestLink(tag(block, "link"));
     if (!title || !link) continue; // skips the "View ProQuest search results" item
+    if (feed.excludeSpanish && isSpanishTitle(title)) continue; // NYT en Español
     if (seen.has(link)) continue;
     seen.add(link);
     out.push({ paper: feed.paper, title, date: proquestDate(tag(block, "pubDate")), link });
   }
   return out;
 }
+
+// Items a feed must never show (NYT en Español for the NYT feed). Used on live, stored and served items.
+export const keepItem = (feed) => (it) => !(feed && feed.excludeSpanish && isSpanishTitle(it && it.title));

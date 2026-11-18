@@ -13,6 +13,11 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   John signs in himself (card + PIN); no credentials are stored anywhere.
 - The feeds only hold ProQuest's newest batch, so the Worker keeps every headline it has ever seen (see below).
   The page loads this month and last month first; "Load older" adds earlier months one at a time.
+- NYT en Español items are never shown or stored. The ProQuest feed has no language, source or section field for
+  them (they're listed as "New York Times (Online)" like the rest), so `worker/lang.js` detects them from the
+  headline: Spanish function words, ¿/¡ and accented letters, after removing Spanish place names common in English
+  headlines (Los Angeles, El Paso, La Niña…). The Worker drops them from the live feed, removes any already stored
+  in the current month on the next refresh, hides them when serving any month, and the cron purges older months.
 - Only headline, date and article link are used. No descriptions, abstracts or article text are fetched,
   stored, or shown.
 
@@ -41,6 +46,13 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   one per 5-minute cache window plus one per cron run (288 + 48), i.e. at most ~672/day for both feeds even if
   the feeds changed constantly (+2 index writes a month); in practice it's a handful per day (one per new ProQuest
   batch). Size: roughly 250 bytes per headline, so even 2,000 headlines a month per feed is ~0.5 MB per shard.
+
+## Importing a day's headlines
+
+`node worker/import-history.mjs <lines.txt> <YYYY-MM-DD> [--write]` (dry run without `--write`). Lines are
+`PAPER|ID|TITLE` or `PAPER|ID|SOURCE|TITLE`; rows whose SOURCE contains "Español"/"en Espanol" (or NYT headlines the
+Spanish detector flags) are skipped. WSJ titles keep only the part before "; ", NYT titles drop a ": [Desk]" suffix.
+Existing items are never overwritten; one `wrangler kv key put` per month key.
 
 ## Tests
 

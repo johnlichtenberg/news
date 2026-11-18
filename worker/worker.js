@@ -2,8 +2,8 @@
 // permanent history in Workers KV (monthly shards, see history.js), and returns it as JSON (paper, headline,
 // date, library article link) to the News page. A free cron trigger refreshes both feeds every 30 minutes.
 import { FEEDS } from "./feeds.js";
-import { parseProquest } from "./parse.js";
-import { storeBatch, readShard, readIndex, monthOf, isMonth } from "./history.js";
+import { parseProquest, keepItem } from "./parse.js";
+import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth } from "./history.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -45,7 +45,7 @@ export async function refreshFeed(feed, env, now = Date.now(), { force = false }
   }
   let st;
   try {
-    st = await storeBatch(kv, feed.id, fresh, now);
+    st = await storeBatch(kv, feed.id, fresh, now, keepItem(feed));
     stats.writes += st.writes;
   } catch (e) {
     error = error || "history write failed";
@@ -57,7 +57,7 @@ export async function refreshFeed(feed, env, now = Date.now(), { force = false }
   const body = { id: feed.id, paper: feed.paper, ok: !!fresh, fetched: new Date(now).toISOString(),
     latest: fresh ? fresh.length : 0, months: st.months, loaded,
     older: st.months.filter((m) => !loaded.includes(m)),
-    items: publicItems([...current, ...(st.previous || [])]) };
+    items: publicItems([...current, ...(st.previous || [])].filter(keepItem(feed))) };
   if (error) body.error = error;
   if (fresh) memo.set(feed.id, { at: now, body });
   return body;
@@ -84,7 +84,7 @@ export default {
       const kv = env.NEWS_HISTORY;
       const [items, months] = await Promise.all([readShard(kv, feed.id, mm[2]), readIndex(kv, feed.id)]);
       const past = mm[2] < monthOf(Date.now());
-      return json({ id: feed.id, paper: feed.paper, ok: true, month: mm[2], months, items: publicItems(items) }, 200, h, past ? 3600 : TTL);
+      return json({ id: feed.id, paper: feed.paper, ok: true, month: mm[2], months, items: publicItems(items.filter(keepItem(feed))) }, 200, h, past ? 3600 : TTL);
     }
     const m = url.pathname.match(/^\/feed\/([a-z0-9-]{1,40})$/);
     if (m) {
@@ -97,9 +97,16 @@ export default {
   },
 
   // Free cron trigger (wrangler.toml): refresh both feeds so history fills in between visits.
+  // It also purges excluded items (NYT en Español) from older stored months; writes only when one is removed.
   async scheduled(event, env, ctx) {
     const now = Date.now();
-    const work = Promise.all(FEEDS.map((f) => refreshFeed(f, env, now, { force: true })));
+    const work = Promise.all(FEEDS.map(async (f) => {
+      await refreshFeed(f, env, now, { force: true });
+      if (f.excludeSpanish && env.NEWS_HISTORY) {
+        const months = (await readIndex(env.NEWS_HISTORY, f.id)).filter((m) => m !== monthOf(now));
+        for (const m of months) stats.purged = (stats.purged || 0) + await purgeShard(env.NEWS_HISTORY, f.id, m, keepItem(f), now);
+      }
+    }));
     if (ctx && ctx.waitUntil) ctx.waitUntil(work);
     await work;
   },

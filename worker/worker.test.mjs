@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import { FEEDS } from "./feeds.js";
 import { parseProquest, proquestLink, proquestDate, plainText, decodeEntities } from "./parse.js";
-import { mergeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
+import { isSpanishTitle, isSpanishSource } from "./lang.js";
+import { keepItem } from "./parse.js";
+import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -44,13 +46,34 @@ eq(proquestDate("Nov 18, 2026"), "2026-11-18"); eq(proquestDate("Sept 3, 2026"),
 eq(decodeEntities("&amp;lt;&#39;&bogus;"), "&lt;'&bogus;");
 eq(plainText("<b>a</b> &amp; b"), "a & b");
 
+// --- NYT en Español detection (headline heuristic; the feed has no language/source field) ---
+for (const t of ["Corea del Sur revisará los contratos de la industria del ‘k-pop’ con menores de edad",
+  "¿Qué significa la victoria de Peltola?", "El gobierno de Milei enfrenta una nueva crisis",
+  "Las elecciones en Chile: lo que hay que saber", "Trump y Xi se reúnen en Shenzhen"]) ok(isSpanishTitle(t), "es: " + t);
+for (const t of ["Los Angeles Fire Kills 3 in La Cañada Flintridge", "From the Front Page: Spain Moves Toward Democracy on Nov. 18, 1976",
+  "El Paso Shooting Trial Opens", "La Niña Is Back. Here Is What That Means for Winter", "Here’s the latest.",
+  "A Day at the Del Mar Racetrack With the Que Sera Crowd", "Bad Bunny Says ‘Gracias’ at the Grammys",
+  "Taco Bell vs. El Pollo Loco: The Battle for Los Angeles", "Mexico’s Sheinbaum Says No to U.S. Troops",
+  "Japan Attempts to Revive an American Industrial Icon", ""]) ok(!isSpanishTitle(t), "en: " + t);
+ok(isSpanishSource("New York Times en Espanol")); ok(isSpanishSource("The New York Times en ESPAÑOL; New York"));
+ok(!isSpanishSource("New York Times (Online)")); ok(!isSpanishSource(""));
+{
+  const SP = `<rss><channel><item><title>ProQuest:Corea del Sur revisará los contratos de la industria del ‘k-pop’ con menores de edad</title><pubDate>Nov 18, 2026</pubDate><link>https://www.proquest.com/docview/3414243599</link></item>
+<item><title>ProQuest:Japan Attempts to Revive an American Industrial Icon</title><pubDate>Nov 18, 2026</pubDate><link>https://www.proquest.com/docview/3414243602</link></item></channel></rss>`;
+  eq(parseProquest(SP, FEEDS[0]).map((i) => i.title), ["Japan Attempts to Revive an American Industrial Icon"], "Español item dropped from live NYT feed");
+  eq(parseProquest(SP, FEEDS[1]).length, 2, "WSJ feed is not filtered");
+  ok(!keepItem(FEEDS[0])({ title: "El gobierno de Milei enfrenta una nueva crisis" })); ok(keepItem(FEEDS[1])({ title: "El gobierno de Milei enfrenta una nueva crisis" }));
+}
+
 // --- whitelist: exactly the two ProQuest feeds ---
+eq(FEEDS.map((f) => !!f.excludeSpanish), [true, false]);
 eq(FEEDS.map((f) => [f.id, f.paper, f.url]), [
   ["nyt-proquest", "NYT", "https://feeds.proquest.com/rss/2310267"],
   ["wsj-proquest", "WSJ", "https://feeds.proquest.com/rss/2310287"],
 ]);
 
 // --- history (monthly shards, kept forever) ---
+const L2 = (id) => LIB(id);
 const T = Date.parse("2026-11-18T07:30:00Z"); // 2:30 AM ET Nov 18
 const it = (id, date, title = "T" + id) => ({ paper: "NYT", title, date, link: LIB(id) });
 {
@@ -89,6 +112,23 @@ const it = (id, date, title = "T" + id) => ({ paper: "NYT", title, date, link: L
   eq(puts.slice(4), ["hist:nyt-proquest:2026-11"], "same month -> shard only, no index write");
   await storeBatch(kv, "nyt-proquest", null, nov + 2 * 86400e3);
   eq(puts.length, 5, "failed fetch -> no writes");
+  // an Español item already stored: removed from the current shard on the next refresh, even if the fetch fails
+  const keep = keepItem(FEEDS[0]);
+  const shardNow = JSON.parse(store.get("hist:nyt-proquest:2026-11"));
+  shardNow.items.push({ paper: "NYT", title: "Corea del Sur revisará los contratos de la industria del k-pop", date: "2026-11-02", link: L2(9), id: "9", seen: 1 });
+  store.set("hist:nyt-proquest:2026-11", JSON.stringify(shardNow));
+  const rr = await storeBatch(kv, "nyt-proquest", null, nov + 3 * 86400e3, keep);
+  eq(rr.current.map((i) => i.id), ["4", "3"], "stored Español item removed"); eq(puts.length, 6, "one write for the purge");
+  eq((await readShard(kv, "nyt-proquest", "2026-11")).map((i) => i.id), ["4", "3"]);
+  await storeBatch(kv, "nyt-proquest", [{ paper: "NYT", title: "Las elecciones en Chile: lo que hay que saber", date: "2026-11-05", link: L2(10) }], nov + 4 * 86400e3, keep);
+  eq(puts.length, 6, "live Español item never stored");
+  // older months: purgeShard
+  const oct = JSON.parse(store.get("hist:nyt-proquest:2026-10"));
+  oct.items.push({ paper: "NYT", title: "¿Qué significa la victoria de Peltola?", date: "2026-10-30", link: L2(11), id: "11", seen: 1 });
+  store.set("hist:nyt-proquest:2026-10", JSON.stringify(oct));
+  eq(await purgeShard(kv, "nyt-proquest", "2026-10", keep), 1);
+  eq(await purgeShard(kv, "nyt-proquest", "2026-10", keep), 0, "second purge removes nothing and doesn't write");
+  eq(puts.length, 7);
 }
 
 // --- worker ---
@@ -167,6 +207,15 @@ eq(calls.length, callsM, "month endpoint never fetches upstream");
 r = await worker.fetch(req("/feed/nyt-proquest/2025-02"), env); j = await r.json(); eq(j.items, [], "empty month");
 for (const p of ["/feed/nyt-proquest/2026-13", "/feed/evil/2026-01", "/feed/nyt-proquest/2026-1"]) { r = await worker.fetch(req(p), env); eq(r.status, 404, p); }
 r = await worker.fetch(req("/feed/nyt-proquest/2026-01", { origin: "https://evil.example" }), env); eq(r.status, 403);
+
+// Español items stored in an old month are hidden when served and purged by the cron
+kvStore.set("hist:nyt-proquest:2026-01", JSON.stringify({ items: [{ paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555), id: "5555", seen: 1 },
+  { paper: "NYT", title: "El gobierno de Milei enfrenta una nueva crisis", date: "2026-01-06", link: LIB(5556), id: "5556", seen: 1 }] }));
+r = await worker.fetch(req("/feed/nyt-proquest/2026-01"), env); j = await r.json();
+eq(j.items.map((i) => i.title), ["January story"], "Español hidden when serving a month");
+upstream = (url) => new Response(url.endsWith("2310287") ? WSJ_XML : NYT_XML2, { status: 200 });
+await worker.scheduled({}, env, { waitUntil() {} });
+eq(JSON.parse(kvStore.get("hist:nyt-proquest:2026-01")).items.map((i) => i.id), ["5555"], "cron purged Español from an old month");
 
 // upstream failure: stored history is still served (ok:false), nothing written
 _test.memo.clear();

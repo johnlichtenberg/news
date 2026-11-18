@@ -1,12 +1,15 @@
 // One-off import of a day's ProQuest headlines into the News KV history.
 //   node import-history.mjs <lines.txt> <YYYY-MM-DD> [--write]
-// Input lines: "NYT|<docview id>|<headline>" or "WSJ|<docview id>|<headline>" (other lines ignored).
+// Input lines: "PAPER|<docview id>|<headline>" or "PAPER|<docview id>|<source>|<headline>" (PAPER is NYT or WSJ;
+// other lines ignored). NYT en Español rows are skipped: a source containing "Español"/"en Espanol", or (any format)
+// a NYT headline the Spanish detector in lang.js flags.
 // Stores headline, paper, date and the library docview link only. Existing items are never overwritten.
 // Without --write it is a dry run. With --write it does one `wrangler kv key put` per month key.
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { plainText } from "./parse.js";
 import { LIBRARY_LOGIN, PROQUEST_ACCOUNT } from "./feeds.js";
+import { isSpanishTitle, isSpanishSource } from "./lang.js";
 
 const NS = "64d4a2262065442ca10a11f79c670480";
 const FEED = { NYT: "nyt-proquest", WSJ: "wsj-proquest" };
@@ -24,13 +27,22 @@ export function cleanTitle(paper, raw) {
 }
 
 const byPaper = { NYT: [], WSJ: [] };
-let bad = 0;
+let bad = 0, spanish = 0;
+export function parseLine(line) {
+  const parts = line.trim().split("|");
+  if (parts.length < 3 || !/^(NYT|WSJ)$/.test(parts[0]) || !/^\d{3,15}$/.test(parts[1])) return null;
+  // 3 columns: PAPER|ID|TITLE. 4+ columns: PAPER|ID|SOURCE|TITLE (a "|" inside the title is kept).
+  const four = parts.length >= 4;
+  return { paper: parts[0], id: parts[1], source: four ? parts[2] : "", raw: (four ? parts.slice(3) : parts.slice(2)).join("|") };
+}
 for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-  const m = /^(NYT|WSJ)\|(\d{3,15})\|(.+)$/.exec(line.trim());
-  if (!m) { if (line.trim()) bad++; continue; }
-  const title = cleanTitle(m[1], m[3]);
+  if (!line.trim()) continue;
+  const row = parseLine(line);
+  if (!row) { bad++; continue; }
+  const title = cleanTitle(row.paper, row.raw);
   if (!title) { bad++; continue; }
-  byPaper[m[1]].push({ paper: m[1], title, date, link: `${LIBRARY_LOGIN}https://www.proquest.com/docview/${m[2]}?accountid=${PROQUEST_ACCOUNT}`, id: m[2], seen });
+  if (isSpanishSource(row.source) || (row.paper === "NYT" && isSpanishTitle(title))) { spanish++; continue; }
+  byPaper[row.paper].push({ paper: row.paper, title, date, link: `${LIBRARY_LOGIN}https://www.proquest.com/docview/${row.id}?accountid=${PROQUEST_ACCOUNT}`, id: row.id, seen });
 }
 
 const wr = (args) => execFileSync("npx", ["-y", "wrangler@3", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120000 });
@@ -52,4 +64,5 @@ for (const paper of ["NYT", "WSJ"]) {
     console.log(`  wrote ${key}`);
   }
 }
+if (spanish) console.log(`skipped ${spanish} NYT en Español row(s)`);
 if (bad) console.log(`ignored ${bad} malformed line(s)`);
