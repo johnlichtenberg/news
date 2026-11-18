@@ -30,6 +30,12 @@ function renderTabs() {
     b.type = "button"; b.dataset.section = s; b.setAttribute("aria-pressed", String(s === state.section));
     return b;
   }));
+  // Keep the selected chip visible in the horizontally scrolling row (phones).
+  const on = box.querySelector('[aria-pressed="true"]');
+  if (on && box.scrollWidth > box.clientWidth) {
+    const l = on.offsetLeft - box.offsetLeft, r = l + on.offsetWidth;
+    if (l < box.scrollLeft || r > box.scrollLeft + box.clientWidth) box.scrollLeft = Math.max(0, l - 24);
+  }
 }
 
 function card(it, now) {
