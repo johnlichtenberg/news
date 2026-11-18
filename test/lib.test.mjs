@@ -1,7 +1,7 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { combineFeeds, filterItems, dayLabel, etToday, clockET } from "../docs/lib.js";
+import { combineFeeds, filterItems, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel } from "../docs/lib.js";
 import { parseProquest } from "../worker/parse.js";
 import { FEEDS } from "../worker/feeds.js";
 
@@ -48,6 +48,26 @@ const xml = (paper) => `<rss><channel><item><title>ProQuest:${paper} A; sub</tit
 const e2e = combineFeeds(FEEDS.map((f) => ({ id: f.id, paper: f.paper, ok: true, items: parseProquest(xml(f.paper), f) })));
 eq(e2e.map((i) => [i.paper, i.title, i.date, i.link]), [["NYT", "NYT A; sub", "2026-11-18", L(111)], ["WSJ", "WSJ A", "2026-11-18", L(222)]]);
 
+// history months: recent first, "Load older" adds the next older month across both feeds
+{
+  const recent = [
+    { id: "nyt-proquest", paper: "NYT", older: ["2026-09", "2026-08"], items: [{ paper: "NYT", title: "Nov", date: "2026-11-18", link: L(1) }] },
+    { id: "wsj-proquest", paper: "WSJ", older: ["2026-09"], items: [{ paper: "WSJ", title: "WNov", date: "2026-11-18", link: L(2) }] },
+  ];
+  const extra = new Map();
+  eq(nextOlderMonth(recent, extra), "2026-09");
+  extra.set("nyt-proquest", new Map([["2026-09", [{ paper: "NYT", title: "Sep", date: "2026-09-30", link: L(3) }]]]));
+  eq(nextOlderMonth(recent, extra), "2026-09", "WSJ still needs September");
+  extra.set("wsj-proquest", new Map([["2026-09", [{ paper: "WSJ", title: "WSep", date: "2026-09-29", link: L(4) }]]]));
+  eq(nextOlderMonth(recent, extra), "2026-08");
+  extra.get("nyt-proquest").set("2026-08", [{ paper: "NYT", title: "Aug", date: "2026-08-01", link: L(5) }]);
+  eq(nextOlderMonth(recent, extra), "", "nothing older left");
+  eq(combineFeeds(feedLists(recent, extra)).map((i) => i.title), ["Nov", "WNov", "Sep", "WSep", "Aug"]);
+  eq(feedLists(recent, new Map())[0].items.length, 1);
+  eq(nextOlderMonth([{ id: "x", older: ["../x", "2026-07"] }]), "2026-07", "only YYYY-MM months");
+  eq(monthLabel("2026-09"), "September 2026");
+}
+
 // static page checks
 const app = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8");
@@ -59,6 +79,7 @@ ok(!/id="sections"/.test(html), "section chips removed");
 for (const p of ["All", "NYT", "WSJ"]) ok(html.includes(`data-paper="${p}"`), "paper filter " + p);
 for (const m of html.matchAll(/<a [^>]*>/g)) ok(/rel="noopener noreferrer"/.test(m[0]), "header link rel " + m[0]);
 ok(/Library \(sign in with card &amp; PIN\)/.test(html), "library sign-in note kept");
+ok(/id="older"/.test(html) && /\/feed\/\$\{encodeURIComponent\(res\.id\)\}\/\$\{month\}/.test(app), "Load older button fetches month shards");
 ok(/connect-src https:\/\/news-feeds-relay\.johnlichtenberg\.workers\.dev;/.test(html), "CSP limits fetches to the relay");
 
 console.log(`page tests: ${n} passed`);

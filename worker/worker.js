@@ -1,12 +1,14 @@
-// news-feeds-relay: fetches John's two public ProQuest RSS alert feeds (fixed whitelist) and returns
-// parsed JSON (headline, paper, date, library article link) to the News page.
-// No article bodies, no secrets, no storage beyond a short cache.
+// news-feeds-relay: fetches John's two public ProQuest RSS alert feeds (fixed whitelist), merges them into a
+// permanent history in Workers KV (monthly shards, see history.js), and returns it as JSON (paper, headline,
+// date, library article link) to the News page. A free cron trigger refreshes both feeds every 30 minutes.
 import { FEEDS } from "./feeds.js";
 import { parseProquest } from "./parse.js";
+import { storeBatch, readShard, readIndex, monthOf, isMonth } from "./history.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
 const memo = new Map(); // per-isolate cache: id -> { at, body }
+const stats = { writes: 0 };
 
 function cors(env, origin) {
   const allowed = env.ALLOWED_ORIGIN || "https://johnlichtenberg.github.io";
@@ -22,23 +24,42 @@ function json(obj, status, headers, maxAge = TTL) {
   });
 }
 
-async function loadFeed(feed, now) {
+const publicItems = (items) => items.map(({ paper, title, date, link }) => ({ paper, title, date, link }));
+
+// Fetch one feed, merge into history (writes only the current month's shard, only if changed) and return
+// the recent history: this month's and last month's shards, plus the list of all stored months.
+export async function refreshFeed(feed, env, now = Date.now(), { force = false } = {}) {
   const hit = memo.get(feed.id);
-  if (hit && now - hit.at < TTL * 1000) return hit.body;
-  let body;
+  if (!force && hit && now - hit.at < TTL * 1000) return hit.body;
+  const kv = env.NEWS_HISTORY;
+  let fresh = null, error = "";
   try {
     const r = await fetch(feed.url, {
       headers: { "User-Agent": "news-feeds-relay (personal RSS reader)", "Accept": "application/rss+xml, application/xml, text/xml" },
       cf: { cacheTtl: TTL, cacheEverything: true },
     });
     if (!r.ok) throw new Error("upstream " + r.status);
-    const xml = await r.text();
-    const items = parseProquest(xml, feed);
-    body = { id: feed.id, paper: feed.paper, ok: true, fetched: new Date(now).toISOString(), items };
+    fresh = parseProquest(await r.text(), feed);
   } catch (e) {
-    body = { id: feed.id, paper: feed.paper, ok: false, error: String(e.message || e).slice(0, 100), items: [] };
+    error = String(e.message || e).slice(0, 100);
   }
-  if (body.ok) memo.set(feed.id, { at: now, body });
+  let st;
+  try {
+    st = await storeBatch(kv, feed.id, fresh, now);
+    stats.writes += st.writes;
+  } catch (e) {
+    error = error || "history write failed";
+    st = { months: [], month: monthOf(now), current: fresh || [], previous: [], failed: true };
+  }
+  // Without a KV binding (or if storage failed) serve the live batch.
+  const current = kv && !st.failed ? st.current : (fresh || []);
+  const loaded = [st.month, st.previousMonth].filter(Boolean);
+  const body = { id: feed.id, paper: feed.paper, ok: !!fresh, fetched: new Date(now).toISOString(),
+    latest: fresh ? fresh.length : 0, months: st.months, loaded,
+    older: st.months.filter((m) => !loaded.includes(m)),
+    items: publicItems([...current, ...(st.previous || [])]) };
+  if (error) body.error = error;
+  if (fresh) memo.set(feed.id, { at: now, body });
   return body;
 }
 
@@ -56,15 +77,32 @@ export default {
     if (url.pathname === "/feeds") {
       return json({ feeds: FEEDS.map(({ id, paper }) => ({ id, paper })) }, 200, h, 3600);
     }
+    const mm = url.pathname.match(/^\/feed\/([a-z0-9-]{1,40})\/(\d{4}-\d{2})$/);
+    if (mm) {
+      const feed = BY_ID.get(mm[1]);
+      if (!feed || !isMonth(mm[2])) return json({ error: "unknown feed or month" }, 404, h);
+      const kv = env.NEWS_HISTORY;
+      const [items, months] = await Promise.all([readShard(kv, feed.id, mm[2]), readIndex(kv, feed.id)]);
+      const past = mm[2] < monthOf(Date.now());
+      return json({ id: feed.id, paper: feed.paper, ok: true, month: mm[2], months, items: publicItems(items) }, 200, h, past ? 3600 : TTL);
+    }
     const m = url.pathname.match(/^\/feed\/([a-z0-9-]{1,40})$/);
     if (m) {
       const feed = BY_ID.get(m[1]);
       if (!feed) return json({ error: "unknown feed" }, 404, h);
-      const body = await loadFeed(feed, Date.now());
+      const body = await refreshFeed(feed, env, Date.now());
       return json(body, 200, h, body.ok ? TTL : 30);
     }
     return json({ error: "not found" }, 404, h);
   },
+
+  // Free cron trigger (wrangler.toml): refresh both feeds so history fills in between visits.
+  async scheduled(event, env, ctx) {
+    const now = Date.now();
+    const work = Promise.all(FEEDS.map((f) => refreshFeed(f, env, now, { force: true })));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(work);
+    await work;
+  },
 };
 
-export const _test = { memo };
+export const _test = { memo, stats };

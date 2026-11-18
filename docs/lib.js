@@ -42,3 +42,29 @@ export function dayLabel(date, now = Date.now()) {
 }
 
 export function clockET(time) { return Number.isFinite(time) ? timeFmt.format(time) + " ET" : ""; }
+
+// Lists per feed for display: the recent response's items, then each loaded older month (newest first).
+// results: [{ id, paper, items, older }]; extra: Map(feed id -> Map(month -> items)).
+export function feedLists(results, extra = new Map()) {
+  return (results || []).filter(Boolean).map((res) => {
+    const ex = extra.get(res.id) || new Map();
+    const months = [...ex.keys()].sort().reverse();
+    return { ...res, items: [...(res.items || []), ...months.flatMap((m) => ex.get(m) || [])] };
+  });
+}
+
+// The newest month not yet loaded across all feeds (for "Load older"), or "".
+export function nextOlderMonth(results, extra = new Map()) {
+  const months = new Set();
+  for (const res of results || []) {
+    if (!res) continue;
+    const have = extra.get(res.id);
+    for (const m of res.older || []) if (/^\d{4}-\d{2}$/.test(m) && !(have && have.has(m))) months.add(m);
+  }
+  return [...months].sort().reverse()[0] || "";
+}
+
+export function monthLabel(m) {
+  const [y, mo] = String(m).split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", year: "numeric" }).format(Date.UTC(y, mo - 1, 15));
+}

@@ -6,3 +6,12 @@ workers_dev = true
 
 [vars]
 ALLOWED_ORIGIN = "https://johnlichtenberg.github.io"
+
+# Rolling 7-day history of the ProQuest alert items (one JSON blob per feed). Not x-text's ARCHIVE.
+[[kv_namespaces]]
+binding = "NEWS_HISTORY"
+id = "64d4a2262065442ca10a11f79c670480"
+
+# Free Workers cron: refresh both feeds every 30 minutes so the history fills in.
+[triggers]
+crons = ["*/30 * * * *"]
