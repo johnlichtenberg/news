@@ -1,4 +1,4 @@
-import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, libraryLink, publisherLabel } from "./lib.js";
+import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, etDay, libraryLink, publisherLabel } from "./lib.js";
 
 const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
 const PAGE = 120;
@@ -44,7 +44,11 @@ function card(it, now) {
   meta.append(el("span", "paper", it.paper));
   const sec = sectionLabel(it);
   if (sec) meta.append(el("span", "sec", sec));
-  if (Number.isFinite(it.time)) {
+  if (Number.isFinite(it.time) && it.dateOnly) {
+    const t = el("time", "when", etDay(it.time, now));
+    t.dateTime = new Date(it.time).toISOString().slice(0, 10);
+    meta.append(t);
+  } else if (Number.isFinite(it.time)) {
     const t = el("time", "when", relTime(it.time, now));
     t.dateTime = new Date(it.time).toISOString();
     t.title = etTime(it.time, now);
@@ -52,17 +56,20 @@ function card(it, now) {
   }
   const h = el("h2");
   const link = el("a", "pq", it.title);
-  link.href = libraryLink(it.paper, it.title) || it.link;
+  link.href = it.pqLink || libraryLink(it.paper, it.title) || it.link;
   link.target = "_blank"; link.rel = "noopener noreferrer";
-  link.dataset.title = it.title;
-  link.title = "Open in ProQuest through Arlington library sign-in";
+  if (!it.pqLink) link.dataset.title = it.title; // exact ProQuest article: nothing to paste
+  link.title = it.pqLink ? "Open this article in ProQuest (Arlington library sign-in)" : "Search ProQuest for this headline (Arlington library sign-in)";
   h.append(link);
   a.append(meta, h);
   if (it.description) a.append(el("p", "desc", it.description));
-  const pub = el("a", "pub", publisherLabel(it.paper) + " \u2197");
-  pub.href = it.link; pub.target = "_blank"; pub.rel = "noopener noreferrer";
   const foot = el("div", "links");
-  foot.append(el("span", "via", "Library \u00b7 ProQuest"), pub);
+  foot.append(el("span", "via", it.pqLink ? "Library \u00b7 ProQuest article" : "Library \u00b7 ProQuest search"));
+  if (it.link) {
+    const pub = el("a", "pub", publisherLabel(it.paper) + " \u2197");
+    pub.href = it.link; pub.target = "_blank"; pub.rel = "noopener noreferrer";
+    foot.append(pub);
+  }
   a.append(foot);
   return a;
 }
@@ -151,7 +158,7 @@ function init() {
   // if ProQuest doesn't pre-fill the search (e.g. after signing in).
   $("#list").addEventListener("click", (e) => {
     const a = e.target.closest("a.pq"); if (!a) return;
-    const t = a.dataset.title;
+    const t = a.dataset.title; // only set for search links, not exact ProQuest articles
     if (t && navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(t).then(() => toast("Headline copied \u2014 paste it into ProQuest search if needed"), () => {});
     }

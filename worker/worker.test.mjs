@@ -1,7 +1,7 @@
 // node worker.test.mjs   (no network: global fetch is mocked)
 import assert from "node:assert/strict";
 import { FEEDS } from "./feeds.js";
-import { parseRss, plainText, cleanLink, decodeEntities } from "./parse.js";
+import { parseRss, plainText, cleanLink, decodeEntities, parseProquest, proquestLink, proquestDate } from "./parse.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 const NYT_XML = `<?xml version="1.0"?><rss version="2.0"><channel><title>NYT &gt; Politics</title>
@@ -53,17 +53,36 @@ eq(decodeEntities("&amp;lt;&#39;&bogus;"), "&lt;'&bogus;");
 ok(plainText("word ".repeat(300), 50).length <= 50, "truncated");
 eq(parseRss(NYT_XML.replace(/<\/channel>/, "<item><title>t</title><link>https://www.nytimes.com/a</link></item>".repeat(100) + "</channel>"), { paper: "NYT", section: "S" }).length, 60, "limit 60");
 
+// --- ProQuest alert feed ---
+const PQ_XML = `<?xml version="1.0"?><rss version="2.0"><channel><title>ProQuest: New York Times (Online)</title>
+<item><title>ProQuest:Today<![CDATA[&]]>#39;s Headlines: Senate</title><description> Smith, A New York Times (Online) 18 Nov 2026<![CDATA[<br/>]]>Formats: <![CDATA[<a href="https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414243596/fulltext?accountid=57895">]]><![CDATA[<b>]]>Full text<![CDATA[</b>]]><![CDATA[</a>]]></description><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414243596?accountid=57895</link></item>
+<item><title>ProQuest:Evil</title><pubDate>Nov 18, 2026</pubDate><link>https://evil.example/login?url=https://www.proquest.com/docview/1?accountid=57895</link></item>
+<item><title>ProQuest:Not docview</title><link>https://library.access.arlingtonva.us/login?url=https://evil.example/docview/123</link></item>
+<item><title>View ProQuest search results</title><description>Follow the link</description><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/rss/RSSBacktoResult/pub/2310267</link></item>
+</channel></rss>`;
+const pq = parseProquest(PQ_XML, { paper: "NYT", section: "ProQuest" });
+eq(pq.length, 1, "only real docview items");
+eq(pq[0], { paper: "NYT", section: "ProQuest", title: "Today's Headlines: Senate", description: "", source: "proquest",
+  link: "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414243596?accountid=57895",
+  published: null, date: "2026-11-18" }, "headline, date and exact library link only");
+ok(!/Full text|Smith|fulltext/.test(JSON.stringify(pq)), "no description, authors or full-text links kept");
+eq(proquestLink("https://www.proquest.com/docview/4242"), "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/4242?accountid=57895", "bare docview wrapped");
+eq(proquestLink("https://library.access.arlingtonva.us/login?url=https%3A%2F%2Fwww.proquest.com%2Fnytimes%2Fdocview%2F7777%3Faccountid%3D1"), "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/7777?accountid=57895", "encoded url= and other accountid normalized");
+eq(proquestLink("javascript:alert(1)"), "");
+eq(proquestLink("https://www.proquest.com/docview/abc"), "");
+eq(proquestDate("Nov 18, 2026"), "2026-11-18"); eq(proquestDate("Sept 3, 2026"), "2026-09-03"); eq(proquestDate("garbage"), null);
+
 // --- whitelist sanity ---
 const ids = new Set();
 for (const f of FEEDS) {
   ok(!ids.has(f.id), "unique id " + f.id); ids.add(f.id);
-  ok(/^https:\/\/(rss\.nytimes\.com|feeds\.content\.dowjones\.io)\//.test(f.url), "publisher feed host " + f.url);
+  ok(/^https:\/\/(rss\.nytimes\.com|feeds\.content\.dowjones\.io)\//.test(f.url) || f.url === "https://feeds.proquest.com/rss/2310267", "allowed feed host " + f.url);
   ok(f.paper === "NYT" || f.paper === "WSJ");
 }
 
 // --- worker ---
 let calls = [];
-let upstream = (url) => new Response(url.includes("nytimes") ? NYT_XML : WSJ_XML, { status: 200 });
+let upstream = (url) => new Response(url.includes("proquest") ? PQ_XML : url.includes("nytimes") ? NYT_XML : WSJ_XML, { status: 200 });
 globalThis.fetch = async (url, init) => { calls.push(String(url)); return upstream(String(url), init); };
 const { default: worker, _test } = await import("./worker.js");
 const env = { ALLOWED_ORIGIN: ORIGIN };
@@ -86,11 +105,14 @@ eq(calls.length, 1, "second request served from 5-minute cache");
 r = await worker.fetch(req("/feed/wsj-markets"), env); j = await r.json();
 eq(j.items[0].title, "Stocks Rise"); eq(calls.length, 2);
 
+r = await worker.fetch(req("/feed/nyt-proquest"), env); j = await r.json();
+eq(j.ok, true); eq(j.items.length, 1); eq(j.items[0].source, "proquest"); eq(calls.at(-1), "https://feeds.proquest.com/rss/2310267");
+eq(calls.length, 3);
 r = await worker.fetch(req("/feed/evil"), env); eq(r.status, 404);
 r = await worker.fetch(req("/feed/https%3A%2F%2Fevil.example"), env); eq(r.status, 404);
 r = await worker.fetch(req("/feed?url=https://evil.example"), env); eq(r.status, 404);
 r = await worker.fetch(req("/"), env); eq(r.status, 404);
-eq(calls.length, 2, "nothing outside the whitelist fetched");
+eq(calls.length, 3, "nothing outside the whitelist fetched");
 
 r = await worker.fetch(req("/feeds", { origin: "https://evil.example" }), env); eq(r.status, 403);
 eq(r.headers.get("Access-Control-Allow-Origin"), ORIGIN, "never echoes other origins");

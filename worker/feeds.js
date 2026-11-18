@@ -14,6 +14,8 @@ export const FEEDS = [
   { id: "nyt-climate",   paper: "NYT", section: "Climate",          url: "https://rss.nytimes.com/services/xml/rss/nyt/Climate.xml" },
   { id: "nyt-opinion",   paper: "NYT", section: "Opinion",          url: "https://rss.nytimes.com/services/xml/rss/nyt/Opinion.xml" },
   { id: "nyt-arts",      paper: "NYT", section: "Arts",             url: "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml" },
+  // John's ProQuest RSS alert for "New York Times (Online)" (public feed; items link to exact ProQuest articles).
+  { id: "nyt-proquest",  paper: "NYT", section: "ProQuest",         url: "https://feeds.proquest.com/rss/2310267", kind: "proquest" },
   { id: "wsj-world",     paper: "WSJ", section: "World",            url: "https://feeds.content.dowjones.io/public/rss/RSSWorldNews" },
   { id: "wsj-us",        paper: "WSJ", section: "U.S.",             url: "https://feeds.content.dowjones.io/public/rss/RSSUSnews" },
   { id: "wsj-politics",  paper: "WSJ", section: "Politics",         url: "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed" },
@@ -29,3 +31,7 @@ export const FEEDS = [
 
 // Article links must point at the publisher's own site.
 export const LINK_HOSTS = { NYT: ["www.nytimes.com", "nytimes.com"], WSJ: ["www.wsj.com", "wsj.com"] };
+
+// ProQuest items open through the Arlington library's EZproxy sign-in (John signs in himself).
+export const LIBRARY_LOGIN = "https://library.access.arlingtonva.us/login?url=";
+export const PROQUEST_ACCOUNT = "57895";

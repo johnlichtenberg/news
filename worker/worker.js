@@ -2,7 +2,7 @@
 // parsed JSON (headline, feed description, section, time, link) to the headlines page.
 // No article bodies, no secrets, no storage beyond a short cache.
 import { FEEDS } from "./feeds.js";
-import { parseRss } from "./parse.js";
+import { parseRss, parseProquest } from "./parse.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -33,7 +33,7 @@ async function loadFeed(feed, now) {
     });
     if (!r.ok) throw new Error("upstream " + r.status);
     const xml = await r.text();
-    const items = parseRss(xml, feed);
+    const items = feed.kind === "proquest" ? parseProquest(xml, feed) : parseRss(xml, feed);
     body = { id: feed.id, paper: feed.paper, section: feed.section, ok: true, fetched: new Date(now).toISOString(), items };
   } catch (e) {
     body = { id: feed.id, paper: feed.paper, section: feed.section, ok: false, error: String(e.message || e).slice(0, 100), items: [] };
