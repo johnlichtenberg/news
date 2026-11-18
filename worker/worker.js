@@ -1,8 +1,8 @@
-// news-feeds-relay: fetches a fixed whitelist of public NYT/WSJ RSS feeds and returns
-// parsed JSON (headline, feed description, section, time, link) to the headlines page.
+// news-feeds-relay: fetches John's two public ProQuest RSS alert feeds (fixed whitelist) and returns
+// parsed JSON (headline, paper, date, library article link) to the News page.
 // No article bodies, no secrets, no storage beyond a short cache.
 import { FEEDS } from "./feeds.js";
-import { parseRss, parseProquest } from "./parse.js";
+import { parseProquest } from "./parse.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -33,10 +33,10 @@ async function loadFeed(feed, now) {
     });
     if (!r.ok) throw new Error("upstream " + r.status);
     const xml = await r.text();
-    const items = feed.kind === "proquest" ? parseProquest(xml, feed) : parseRss(xml, feed);
-    body = { id: feed.id, paper: feed.paper, section: feed.section, ok: true, fetched: new Date(now).toISOString(), items };
+    const items = parseProquest(xml, feed);
+    body = { id: feed.id, paper: feed.paper, ok: true, fetched: new Date(now).toISOString(), items };
   } catch (e) {
-    body = { id: feed.id, paper: feed.paper, section: feed.section, ok: false, error: String(e.message || e).slice(0, 100), items: [] };
+    body = { id: feed.id, paper: feed.paper, ok: false, error: String(e.message || e).slice(0, 100), items: [] };
   }
   if (body.ok) memo.set(feed.id, { at: now, body });
   return body;
@@ -54,7 +54,7 @@ export default {
     if (!ok) return json({ error: "forbidden" }, 403, h);
 
     if (url.pathname === "/feeds") {
-      return json({ feeds: FEEDS.map(({ id, paper, section }) => ({ id, paper, section })) }, 200, h, 3600);
+      return json({ feeds: FEEDS.map(({ id, paper }) => ({ id, paper })) }, 200, h, 3600);
     }
     const m = url.pathname.match(/^\/feed\/([a-z0-9-]{1,40})$/);
     if (m) {

@@ -1,152 +1,64 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
-import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, linkKey, proquestQuery, proquestTarget, libraryLink, publisherLabel } from "../docs/lib.js";
-import { parseRss } from "../worker/parse.js";
+import { readFileSync } from "node:fs";
+import { combineFeeds, filterItems, dayLabel, etToday, clockET } from "../docs/lib.js";
+import { parseProquest } from "../worker/parse.js";
+import { FEEDS } from "../worker/feeds.js";
 
 let n = 0;
 const eq = (a, b, m) => { assert.deepEqual(a, b, m); n++; };
 const ok = (c, m) => { assert.ok(c, m); n++; };
+const L = (id) => `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/${id}?accountid=57895`;
 
 const res = [
-  { id: "nyt-top", paper: "NYT", section: "Top Stories", ok: true, items: [
-    { paper: "NYT", section: "Top Stories", title: "A", description: "", link: "https://www.nytimes.com/2026/11/17/us/politics/a.html", published: "2026-11-18T06:00:00.000Z" },
-    { paper: "NYT", section: "Top Stories", title: "No date", description: "d", link: "https://www.nytimes.com/nd.html", published: null } ] },
-  { id: "nyt-politics", paper: "NYT", section: "Politics", ok: true, items: [
-    { paper: "NYT", section: "Politics", title: "A", description: "Desc A", link: "https://www.nytimes.com/2026/11/17/us/politics/a.html?smid=x", published: "2026-11-18T06:05:00.000Z" } ] },
-  { id: "wsj-markets", paper: "WSJ", section: "Markets", ok: true, items: [
-    { paper: "WSJ", section: "Markets", title: "B", description: "Desc B", link: "https://www.wsj.com/b-1", published: "2026-11-18T05:00:00.000Z" },
-    { paper: "WSJ", section: "Markets", title: "C newest", description: "", link: "https://www.wsj.com/c", published: "2026-11-18T06:30:00.000Z" } ] },
-  { id: "wsj-business", paper: "WSJ", section: "Business", ok: true, items: [
-    { paper: "WSJ", section: "Business", title: "B", description: "", link: "https://wsj.com/b-1/", published: "2026-11-18T05:00:00.000Z" },
-    { paper: "WSJ", section: "Business", title: "b!", description: "", link: "https://www.wsj.com/other-url-same-title", published: "2026-11-18T04:00:00.000Z" } ] },
-  { id: "wsj-economy", paper: "WSJ", section: "Economy", ok: true, items: [
-    { paper: "WSJ", section: "Economy", title: "Long Enough Headline About Rates", description: "", link: "https://www.wsj.com/rates-1", published: "2026-11-18T03:00:00.000Z" },
-    { paper: "WSJ", section: "Economy", title: "Here\u2019s the latest.", description: "", link: "https://www.wsj.com/live-1", published: "2026-11-18T02:00:00.000Z" },
-    { paper: "WSJ", section: "Economy", title: "Here's the latest.", description: "", link: "https://www.wsj.com/live-2", published: "2026-11-18T01:00:00.000Z" } ] },
-  { id: "wsj-markets2", paper: "WSJ", section: "Markets", ok: true, items: [
-    { paper: "WSJ", section: "Markets", title: "Long enough headline about rates!", description: "", link: "https://www.wsj.com/rates-other-url", published: "2026-11-18T03:00:00.000Z" } ] },
-  { id: "bad", ok: false, items: [] }, null,
+  { id: "wsj-proquest", paper: "WSJ", ok: true, items: [
+    { paper: "WSJ", title: "W1", date: "2026-11-18", link: L(21) },
+    { paper: "WSJ", title: "W2 older", date: "2026-11-17", link: L(22) },
+    { paper: "WSJ", title: "W3", date: "2026-11-18", link: L(23) } ] },
+  { id: "nyt-proquest", paper: "NYT", ok: true, items: [
+    { paper: "NYT", title: "N1", date: "2026-11-18", link: L(11) },
+    { paper: "NYT", title: "N2 undated", date: null, link: L(12) },
+    { paper: "NYT", title: "N3", date: "2026-11-18", link: L(13) },
+    { paper: "NYT", title: "", date: "2026-11-18", link: L(14) },
+    { paper: "NYT", title: "no link", date: "2026-11-18" } ] },
+  { id: "x", ok: false, items: [] }, null,
 ];
-const items = mergeItems(res);
-eq(items.map((i) => i.title), ["C newest", "A", "B", "b!", "Long Enough Headline About Rates", "Here\u2019s the latest.", "Here's the latest.", "No date"], "newest first, dupes removed, undated last");
-eq(items[1].sections, ["Top Stories", "Politics"]);
-eq(items[1].description, "Desc A", "fills description from the duplicate");
-eq(items[1].published, "2026-11-18T06:05:00.000Z", "keeps latest time");
-eq(items[2].sections, ["Business", "Markets"], "WSJ dup by link (www/trailing slash)");
-eq(items[4].sections, ["Economy", "Markets"], "long headline matched across feeds by title");
-eq(items.filter((i) => /latest/.test(i.title)).length, 2, "short generic headlines are not merged by title");
-eq(linkKey("https://www.wsj.com/b-1/?mod=x#y"), "wsj.com/b-1");
-eq(linkKey("https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414243596?accountid=57895"), "proquest:3414243596");
-eq(sectionLabel(items[1]), "Politics");
-eq(sectionLabel(items.find((i) => i.title === "No date")), "Top Stories");
-eq(filterItems(items, { paper: "WSJ" }).length, 6);
-eq(filterItems(items, { paper: "NYT", section: "Politics" }).map((i) => i.title), ["A"]);
-eq(filterItems(items, { section: "Markets" }).map((i) => i.title), ["C newest", "B", "Long Enough Headline About Rates"]);
-eq(filterItems(items, {}).length, 8);
-eq(sectionsFor(items), ["Top Stories", "Politics", "Economy", "Business", "Markets"]);
-eq(sectionsFor(items, "WSJ"), ["Economy", "Business", "Markets"]);
-eq(mergeItems([]), []);
+const items = combineFeeds(res);
+eq(items.map((i) => i.title), ["N1", "N3", "W1", "W3", "W2 older", "N2 undated"],
+  "newest date first; within a date NYT then WSJ, each in its feed's order; undated last");
+eq(Object.keys(items[0]).sort(), ["date", "i", "link", "paper", "rank", "title"]);
+eq(items[0].link, L(11));
+eq(filterItems(items, "NYT").map((i) => i.title), ["N1", "N3", "N2 undated"]);
+eq(filterItems(items, "WSJ").map((i) => i.title), ["W1", "W3", "W2 older"]);
+eq(filterItems(items, "All").length, 6);
+eq(combineFeeds([]), []);
 
-const now = Date.parse("2026-11-18T06:35:00Z");
-eq(relTime(now - 20e3, now), "just now");
-eq(relTime(now - 5 * 60e3, now), "5 min ago");
-eq(relTime(now - 3 * 3600e3, now), "3 hr ago");
-eq(relTime(now - 30 * 3600e3, now), "yesterday");
-eq(relTime(now - 80 * 3600e3, now), "3 days ago");
-eq(relTime(NaN, now), "");
-// 06:21 UTC Nov 18 = 1:21 AM ET Nov 18 (EST, UTC-5)
-eq(etTime(Date.parse("2026-11-18T06:21:20Z"), now), "1:21 AM ET");
-eq(etTime(Date.parse("2026-11-18T03:00:00Z"), now), "Nov 17, 10:00 PM ET", "previous ET day");
-eq(etTime(Date.parse("2026-07-04T16:00:00Z"), now), "Jul 4, 12:00 PM ET", "EDT in summer");
+const now = Date.parse("2026-11-18T07:28:00Z"); // 2:28 AM ET
+eq(etToday(now), "2026-11-18");
+eq(etToday(Date.parse("2026-11-18T03:00:00Z")), "2026-11-17", "ET day, not UTC day");
+eq(dayLabel("2026-11-18", now), "Today");
+eq(dayLabel("2026-11-17", now), "Yesterday");
+eq(dayLabel("2026-11-14", now), "Sat, Nov 14");
+eq(dayLabel("2025-12-31", now), "Wed, Dec 31, 2025");
+eq(dayLabel("", now), "Undated");
+eq(clockET(Date.parse("2026-11-18T07:28:00Z")), "2:28 AM ET");
 
-// end to end: worker parser output feeds the page helpers
-const xml = `<rss><channel><item><title>X &amp; Y</title><link>https://www.nytimes.com/x.html</link>
-<description>&lt;b&gt;Hi&lt;/b&gt;</description><pubDate>Wed, 18 Nov 2026 06:00:00 +0000</pubDate></item></channel></rss>`;
-const merged = mergeItems([{ items: parseRss(xml, { paper: "NYT", section: "World" }) }]);
-eq(merged[0].title, "X & Y"); eq(merged[0].description, "Hi"); eq(merged[0].sections, ["World"]);
+// end to end: Worker parser output -> page list
+const xml = (paper) => `<rss><channel><item><title>ProQuest:${paper} A; sub</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/${paper === "NYT" ? 111 : 222}?accountid=57895</link></item></channel></rss>`;
+const e2e = combineFeeds(FEEDS.map((f) => ({ id: f.id, paper: f.paper, ok: true, items: parseProquest(xml(f.paper), f) })));
+eq(e2e.map((i) => [i.paper, i.title, i.date, i.link]), [["NYT", "NYT A; sub", "2026-11-18", L(111)], ["WSJ", "WSJ A", "2026-11-18", L(222)]]);
 
-// ProQuest alert items (exact article links) merged with publisher feed items
-import { etMidnight, etDay } from "../docs/lib.js";
-import { parseProquest } from "../worker/parse.js";
-const PQ = (id, title, date = "Nov 18, 2026") => `<item><title>ProQuest:${title}</title><description> A, B New York Times (Online) 18 Nov 2026<![CDATA[<br/>]]>Formats: <![CDATA[<a href="https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/${id}/fulltext?accountid=57895">]]>Full text<![CDATA[</a>]]></description><pubDate>${date}</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/${id}?accountid=57895</link></item>`;
-const pqXml = `<rss><channel><title>ProQuest: New York Times (Online)</title>${PQ(111, "Democrats Claim 56 Senate Seats After Mary Peltola Wins")}${PQ(222, "Only In ProQuest Story About Something", "Nov 17, 2026")}${PQ(333, "Here&#8217;s the latest.")}<item><title>View ProQuest search results</title><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/rss/RSSBacktoResult/pub/2310267</link></item></channel></rss>`;
-const pqItems = parseProquest(pqXml, { paper: "NYT", section: "ProQuest" });
-const rssNyt = [{ paper: "NYT", section: "Politics", title: "Democrats Claim 56 Senate Seats After Mary Peltola Wins", description: "Feed summary.", link: "https://www.nytimes.com/2026/11/17/us/politics/alaska.html", published: "2026-11-18T06:21:20.000Z" },
-  { paper: "NYT", section: "World", title: "Here\u2019s the latest.", description: "Live.", link: "https://www.nytimes.com/live/x", published: "2026-11-18T06:00:00.000Z" }];
-for (const order of [[{ items: rssNyt }, { items: pqItems }], [{ items: pqItems }, { items: rssNyt }]]) {
-  const m = mergeItems(order);
-  eq(m.length, 4, "matching story merged once; generic title not merged");
-  const dem = m.find((i) => /Democrats/.test(i.title));
-  eq(dem.pqLink, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/111?accountid=57895", "exact ProQuest link attached");
-  eq(dem.link, "https://www.nytimes.com/2026/11/17/us/politics/alaska.html", "publisher link kept");
-  eq(dem.description, "Feed summary."); eq(dem.dateOnly, false); eq(dem.published, "2026-11-18T06:21:20.000Z");
-  eq(dem.sections, ["Politics", "ProQuest"]); eq(sectionLabel(dem), "Politics");
-  const only = m.find((i) => /Only In ProQuest/.test(i.title));
-  eq(only.link, "", "ProQuest-only story has no publisher link");
-  eq(only.dateOnly, true); eq(only.time, Date.parse("2026-11-17T05:00:00Z"), "date-only -> ET midnight");
-  eq(sectionLabel(only), "");
-  eq(m.filter((i) => /latest/.test(i.title)).length, 2);
-  eq(m.map((i) => i.title).at(-1), "Only In ProQuest Story About Something", "older date-only sorts by its day");
-}
-// WSJ ProQuest alert merges with WSJ section feeds the same way
-const wsjPq = parseProquest(`<rss><channel><item><title>ProQuest:Asian Equities Mixed as Investors Parse Nvidia's Results, Guidance; South Korea leads</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414224050?accountid=57895</link></item>
-<item><title>ProQuest:JGBs Edge Lower Ahead of 20-Year Auction</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414212506?accountid=57895</link></item></channel></rss>`,
-  { paper: "WSJ", section: "ProQuest", subheadSep: "; " });
-const wm = mergeItems([{ items: [{ paper: "WSJ", section: "Markets", title: "Asian Equities Mixed as Investors Parse Nvidia\u2019s Results, Guidance", description: "d", link: "https://www.wsj.com/finance/asian-equities-7041c3ea", published: "2026-11-18T05:33:00.000Z" }] }, { items: wsjPq }]);
-eq(wm.length, 2);
-eq(wm[0].pqLink, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414224050?accountid=57895", "WSJ match gets exact ProQuest link");
-eq(wm[0].link, "https://www.wsj.com/finance/asian-equities-7041c3ea"); eq(wm[0].sections, ["Markets", "ProQuest"]);
-eq(wm[1].paper, "WSJ"); eq(wm[1].link, ""); eq(wm[1].dateOnly, true); eq(wm[1].sections, ["ProQuest"]);
-eq(filterItems(wm, { paper: "WSJ", section: "ProQuest" }).length, 2);
-eq(sectionsFor(wm, "WSJ"), ["Markets", "ProQuest"]);
-
-// subhead glued on with only a space: matched by whole-word headline prefix
-const glued = mergeItems([
-  { items: [{ paper: "WSJ", section: "World", title: "He Runs One of the World\u2019s Deadliest Military Forces. We Went Inside His Bunker.", description: "d", link: "https://www.wsj.com/world/bunker-ba042402", published: "2026-11-18T03:00:00.000Z" },
-    { paper: "WSJ", section: "World", title: "He Runs", description: "", link: "https://www.wsj.com/short", published: "2026-11-18T02:00:00.000Z" }] },
-  { items: [{ paper: "WSJ", section: "ProQuest", source: "proquest", title: "He Runs One of the World's Deadliest Military Forces. We Went Inside His Bunker. Maj. Robert Brovdi is bringing", link: "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414232341?accountid=57895", date: "2026-11-18", published: null },
-    { paper: "NYT", section: "ProQuest", source: "proquest", title: "He Runs One of the World's Deadliest Military Forces. We Went Inside His Bunker. Other paper", link: "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/999999?accountid=57895", date: "2026-11-18", published: null }] }]);
-eq(glued.length, 3, "glued WSJ item merged; other paper never merged");
-const gw = glued.find((i) => i.paper === "WSJ" && i.link === "https://www.wsj.com/world/bunker-ba042402");
-eq(gw.pqLink, "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/3414232341?accountid=57895");
-eq(gw.title, "He Runs One of the World\u2019s Deadliest Military Forces. We Went Inside His Bunker.", "publisher headline shown");
-eq(gw.sections, ["World", "ProQuest"]);
-eq(glued.find((i) => i.title === "He Runs").pqLink, "", "short headline never prefix-matched");
-
-eq(etMidnight("2026-07-04"), Date.parse("2026-07-04T04:00:00Z"), "EDT midnight");
-eq(etMidnight("bad"), NaN);
-eq(etDay(etMidnight("2026-11-18"), now), "today");
-eq(etDay(etMidnight("2026-11-17"), now), "yesterday");
-eq(etDay(etMidnight("2026-11-10"), now), "Nov 10");
-
-// ProQuest library links
-eq(proquestQuery("Democrats Claim 56 Senate Seats"), '"Democrats Claim 56 Senate Seats"');
-eq(proquestQuery('He Said \u201cNo\u201d to "Them"'), '"He Said No to Them"', "inner quotes dropped");
-eq(proquestQuery("  "), "");
-eq(proquestTarget("NYT", "A & B?"), "https://www.proquest.com/nytimes/?accountid=57895&q=%22A%20%26%20B%3F%22");
-eq(proquestTarget("WSJ", "Stocks Rise"), "https://www.proquest.com/wallstreetjournal/?accountid=57895&q=%22Stocks%20Rise%22");
-eq(proquestTarget("XX", "t"), "");
-const lib = libraryLink("NYT", "A & B?");
-eq(lib, "https://library.access.arlingtonva.us/login?qurl=https%3A%2F%2Fwww.proquest.com%2Fnytimes%2F%3Faccountid%3D57895%26q%3D%2522A%2520%2526%2520B%253F%2522");
-const back = new URL(lib).searchParams.get("qurl");
-eq(back, proquestTarget("NYT", "A & B?"), "EZproxy decodes qurl once back to the exact target");
-eq(new URL(back).searchParams.get("q"), '"A & B?"', "ProQuest receives the quoted headline");
-eq(new URL(back).searchParams.get("accountid"), "57895");
-eq(new URL(lib).hostname, "library.access.arlingtonva.us");
-ok(!/pin|password|user|card/i.test(new URL(lib).search.replace(/qurl=.*/, "")), "no credentials in link");
-eq(libraryLink("WSJ", "x").startsWith("https://library.access.arlingtonva.us/login?qurl=https%3A%2F%2Fwww.proquest.com%2Fwallstreetjournal%2F"), true);
-eq(publisherLabel("NYT"), "nytimes.com"); eq(publisherLabel("WSJ"), "wsj.com");
-
-// page safety checks on the static files
-import { readFileSync } from "node:fs";
+// static page checks
 const app = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8");
 ok(!/innerHTML|insertAdjacentHTML|document\.write/.test(app), "DOM built with textContent only");
-ok((app.match(/rel = "noopener noreferrer"/g) || []).length >= 2, "headline + publisher links use rel=noopener");
-ok(/it\.pqLink \|\| libraryLink\(it\.paper, it\.title\)/.test(app), "headline opens exact ProQuest article, else library search");
-ok(/pub\.href = it\.link/.test(app), "secondary publisher link kept");
-ok(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(app), "nothing stored in the browser");
+ok(/link\.rel = "noopener noreferrer"/.test(app), "article links use rel=noopener");
+ok(!/localStorage|sessionStorage|indexedDB|document\.cookie|clipboard/.test(app), "nothing stored or copied");
+ok(!/nytimes\.com|wsj\.com|section/i.test(app), "no publisher links or sections left");
+ok(!/id="sections"/.test(html), "section chips removed");
+for (const p of ["All", "NYT", "WSJ"]) ok(html.includes(`data-paper="${p}"`), "paper filter " + p);
 for (const m of html.matchAll(/<a [^>]*>/g)) ok(/rel="noopener noreferrer"/.test(m[0]), "header link rel " + m[0]);
+ok(/Library \(sign in with card &amp; PIN\)/.test(html), "library sign-in note kept");
 ok(/connect-src https:\/\/news-feeds-relay\.johnlichtenberg\.workers\.dev;/.test(html), "CSP limits fetches to the relay");
 
 console.log(`page tests: ${n} passed`);

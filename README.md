@@ -1,33 +1,26 @@
-# News headlines (NYT + WSJ)
+# News (NYT + WSJ via ProQuest)
 
 A small personal headlines page: https://johnlichtenberg.github.io/news/
 
-- Uses only the publishers' public RSS feeds: headline, the feed's own short description, section, and time.
-- Tapping a headline opens a ProQuest search for it (inside the NYT or WSJ publication) through the
-  Arlington Public Library's EZproxy sign-in, and copies the headline to the clipboard. John signs in
-  himself; no credentials are stored anywhere. A small nytimes.com / wsj.com link opens the publisher page.
-- NYT also comes from John's ProQuest RSS alert (`https://feeds.proquest.com/rss/2310267`, public, no sign-in).
-  Only each item's headline, date and article link are used (the feed has no abstract). Links are normalized to
+- Shows only John's two ProQuest RSS alert feeds (public, no sign-in needed to read the feeds):
+  - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
+  - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
+    only the headline is kept)
+- Each article shows its headline, paper and date. Newest date first; within a date, NYT then WSJ, each in the
+  feed's own order. Filters: All / NYT / WSJ.
+- Each headline opens the exact article in ProQuest through the Arlington Public Library's EZproxy sign-in:
   `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
-  When the same story is in an NYT section feed, the page keeps the section feed's time, summary and nytimes.com
-  link and opens the exact ProQuest article. ProQuest-only stories show under the "ProQuest" section with a date.
-- WSJ likewise uses John's ProQuest alert `https://feeds.proquest.com/rss/2310287` (feed id `wsj-proquest`). Its titles
-  are "Headline; subhead"; only the headline before the first "; " is kept.
-- No article text is fetched, stored, or shown by this site.
-- The header links open the Arlington Public Library's NYT and WSJ access (ProQuest, card + PIN).
-- Library link format (`libraryLink` in `docs/lib.js`):
-  `https://library.access.arlingtonva.us/login?qurl=<encodeURIComponent(target)>` with target
-  `https://www.proquest.com/<nytimes|wallstreetjournal>/?accountid=57895&q=<encodeURIComponent('"headline"')>`.
-  The `q` parameter is unconfirmed (ProQuest needs a sign-in to test); if ProQuest ignores it, the
-  publication's search page opens and the copied headline can be pasted.
+  John signs in himself (card + PIN); no credentials are stored anywhere.
+- Only headline, date and article link are used. No descriptions, abstracts or article text are fetched,
+  stored, or shown.
 
 ## How it works
 
 - `docs/` is the static site (GitHub Pages, `main` branch, `/docs`).
 - `worker/` is the Cloudflare Worker `news-feeds-relay` (free plan, no bindings or secrets).
-  Browsers can't read RSS cross-origin, so the page asks the Worker. The Worker only fetches the
-  fixed list in `worker/feeds.js`, parses each feed to JSON, and allows only
-  `https://johnlichtenberg.github.io`. Results are cached for 5 minutes.
+  Browsers can't read RSS cross-origin, so the page asks the Worker. The Worker only fetches the two
+  feeds in `worker/feeds.js`, parses them to JSON, and allows only `https://johnlichtenberg.github.io`.
+  Results are cached for 5 minutes.
   - `GET /feeds` lists the feed ids. `GET /feed/<id>` returns one parsed feed.
 - Nothing is scheduled. Feeds load when the page opens, on the Refresh button, and when you come
   back to the tab after 5 minutes.
@@ -35,8 +28,7 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
 ## Tests
 
 ```
-node worker/worker.test.mjs   # parser + Worker (fetch mocked)
-node test/lib.test.mjs        # page logic: merge, de-dupe, filters, ET times
+npm test   # worker/worker.test.mjs (parser + Worker, fetch mocked) and test/lib.test.mjs (page logic)
 ```
 
 ## Deploy the Worker
@@ -44,5 +36,3 @@ node test/lib.test.mjs        # page logic: merge, de-dupe, filters, ET times
 ```
 cd worker && npx wrangler@3 deploy
 ```
-
-To add or remove a feed, edit `worker/feeds.js` (and `SECTION_ORDER` in `docs/lib.js` for a new section), run the tests, and redeploy.

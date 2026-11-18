@@ -1,6 +1,6 @@
-// Minimal RSS 2.0 parser. Keeps only what the feed itself provides per item:
-// headline, the feed's short description, link, publish time. Output is plain text.
-import { LINK_HOSTS, LIBRARY_LOGIN, PROQUEST_ACCOUNT } from "./feeds.js";
+// Minimal parser for ProQuest RSS alert feeds. Keeps only each item's headline, date and article link,
+// as plain text. Never reads descriptions, abstracts, or full text.
+import { LIBRARY_LOGIN, PROQUEST_ACCOUNT } from "./feeds.js";
 
 const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rsquo: "\u2019", lsquo: "\u2018",
   rdquo: "\u201d", ldquo: "\u201c", mdash: "\u2014", ndash: "\u2013", hellip: "\u2026", eacute: "\u00e9" };
@@ -34,45 +34,9 @@ function tag(block, name) {
   return m ? m[1] : "";
 }
 
-export function cleanLink(raw, paper) {
-  const s = plainText(raw, 2000);
-  let u;
-  try { u = new URL(s); } catch { return ""; }
-  if (u.protocol !== "https:" && u.protocol !== "http:") return "";
-  const hosts = LINK_HOSTS[paper] || [];
-  if (!hosts.includes(u.hostname.toLowerCase())) return "";
-  u.protocol = "https:";
-  u.hash = "";
-  // Drop RSS tracking params; the article path is all that's needed.
-  for (const k of [...u.searchParams.keys()]) if (/^(mod|smid|utm_|partner|emc)/i.test(k)) u.searchParams.delete(k);
-  return u.toString();
-}
-
-export function parseRss(xml, feed, limit = 60) {
-  const out = [];
-  const items = String(xml || "").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item\s*>/gi) || [];
-  for (const block of items) {
-    if (out.length >= limit) break;
-    const title = plainText(tag(block, "title"), 300);
-    const link = cleanLink(tag(block, "link"), feed.paper);
-    if (!title || !link) continue;
-    const t = Date.parse(plainText(tag(block, "pubDate"), 100));
-    out.push({
-      paper: feed.paper,
-      section: feed.section,
-      title,
-      description: plainText(tag(block, "description"), 500),
-      link,
-      published: Number.isFinite(t) ? new Date(t).toISOString() : null,
-    });
-  }
-  return out;
-}
-
 // --- ProQuest RSS alerts -----------------------------------------------------
 // Items carry the headline (prefixed "ProQuest:"), a date-only pubDate ("Nov 18, 2026"), and a link to the
-// article's docview page behind the library proxy. The description holds only authors/publication and
-// "Citation / Full text" format links, which are not used. Nothing beyond headline, date and link is kept.
+// article's docview page behind the library proxy. Items are returned in the feed's own order.
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 export function proquestDate(raw) {
@@ -100,7 +64,7 @@ export function proquestLink(raw) {
 }
 
 export function parseProquest(xml, feed, limit = 100) {
-  const out = [];
+  const out = [], seen = new Set();
   const items = String(xml || "").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item\s*>/gi) || [];
   for (const block of items) {
     if (out.length >= limit) break;
@@ -109,8 +73,9 @@ export function parseProquest(xml, feed, limit = 100) {
     if (title.length > 300) title = title.slice(0, 299).replace(/\s+\S*$/, "") + "\u2026";
     const link = proquestLink(tag(block, "link"));
     if (!title || !link) continue; // skips the "View ProQuest search results" item
-    out.push({ paper: feed.paper, section: feed.section, title, description: "", link,
-      published: null, date: proquestDate(tag(block, "pubDate")), source: "proquest" });
+    if (seen.has(link)) continue;
+    seen.add(link);
+    out.push({ paper: feed.paper, title, date: proquestDate(tag(block, "pubDate")), link });
   }
   return out;
 }

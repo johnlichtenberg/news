@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://news-feeds-relay.johnlichtenberg.workers.dev; base-uri 'none'; form-action 'none'">
-<title>Headlines · NYT &amp; WSJ</title>
+<title>News · NYT &amp; WSJ via ProQuest</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <script type="module" src="app.js"></script>
@@ -17,9 +17,9 @@
 <body>
 <header class="top">
   <div class="bar">
-    <h1>Headlines</h1>
+    <h1>News</h1>
     <span id="count" class="count"></span>
-    <button id="refresh" type="button" class="refresh" aria-label="Refresh headlines">&#x21bb;<span class="lbl"> Refresh</span></button>
+    <button id="refresh" type="button" class="refresh" aria-label="Refresh">&#x21bb;<span class="lbl"> Refresh</span></button>
   </div>
   <nav class="library" aria-label="Library access">
     <span>Library (sign in with card &amp; PIN):</span>
@@ -31,21 +31,16 @@
     <button type="button" data-paper="NYT" aria-pressed="false">NYT</button>
     <button type="button" data-paper="WSJ" aria-pressed="false">WSJ</button>
   </div>
-  <div id="sections" class="chips" role="toolbar" aria-label="Section"></div>
 </header>
 <main>
   <p id="status" class="status" role="status" aria-live="polite"></p>
   <div id="list" class="list"></div>
-  <p id="empty" class="empty" hidden>No stories here right now.</p>
-  <button id="more" type="button" class="more" hidden>Show more</button>
-  <div id="toast" class="toast" role="status" hidden></div>
+  <p id="empty" class="empty" hidden>No articles right now.</p>
   <noscript><p class="empty">This page needs JavaScript to load the headlines.</p></noscript>
 </main>
 <footer class="foot">
-  Headlines and summaries come from the publishers' public RSS feeds, plus John's ProQuest alert feeds for the
-  New York Times and the Wall Street Journal. "ProQuest article" stories open that exact article in ProQuest through the Arlington library
-  sign-in (card &amp; PIN). Other headlines open a ProQuest search for the headline and copy it, in case you need to
-  paste it into ProQuest's search box. The small nytimes.com / wsj.com link opens the publisher's page.
+  Headlines come from your ProQuest RSS alerts for the New York Times (Online) and the Wall Street Journal (Online).
+  Each headline opens that article in ProQuest through the Arlington library sign-in (card &amp; PIN).
 </footer>
 </body>
 </html>
