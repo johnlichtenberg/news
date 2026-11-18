@@ -49,12 +49,16 @@ eq(plainText("<b>a</b> &amp; b"), "a & b");
 // --- NYT en Español detection (headline heuristic; the feed has no language/source field) ---
 for (const t of ["Corea del Sur revisará los contratos de la industria del ‘k-pop’ con menores de edad",
   "¿Qué significa la victoria de Peltola?", "El gobierno de Milei enfrenta una nueva crisis",
-  "Las elecciones en Chile: lo que hay que saber", "Trump y Xi se reúnen en Shenzhen"]) ok(isSpanishTitle(t), "es: " + t);
+  "Las elecciones en Chile: lo que hay que saber", "Trump y Xi se reúnen en Shenzhen",
+  "Dos jóvenes activistas reflejan la polarización de Francia", "De empresario fallido a presunto conspirador en el magnicidio de Haití",
+  "Adiós a los 1,5 grados", "Una pesadilla invernal se avecina en Ucrania mientras Rusia ataca implacablemente",
+  "La hija de Jensen Huang sigue teniendo un alto cargo en Nvidia"]) ok(isSpanishTitle(t), "es: " + t);
 for (const t of ["Los Angeles Fire Kills 3 in La Cañada Flintridge", "From the Front Page: Spain Moves Toward Democracy on Nov. 18, 1976",
   "El Paso Shooting Trial Opens", "La Niña Is Back. Here Is What That Means for Winter", "Here’s the latest.",
   "A Day at the Del Mar Racetrack With the Que Sera Crowd", "Bad Bunny Says ‘Gracias’ at the Grammys",
   "Taco Bell vs. El Pollo Loco: The Battle for Los Angeles", "Mexico’s Sheinbaum Says No to U.S. Troops",
-  "Japan Attempts to Revive an American Industrial Icon", ""]) ok(!isSpanishTitle(t), "en: " + t);
+  "Japan Attempts to Revive an American Industrial Icon", "Del Toro Wins Oscar for Frankenstein", "José Andrés Feeds Gaza",
+  "Peña Nieto Arrested", "Despacito Tops Charts Again", "U.S. Watch", "Corrections", ""]) ok(!isSpanishTitle(t), "en: " + t);
 ok(isSpanishSource("New York Times en Espanol")); ok(isSpanishSource("The New York Times en ESPAÑOL; New York"));
 ok(!isSpanishSource("New York Times (Online)")); ok(!isSpanishSource(""));
 {
