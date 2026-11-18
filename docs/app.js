@@ -1,4 +1,4 @@
-import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime } from "./lib.js";
+import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, libraryLink, publisherLabel } from "./lib.js";
 
 const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
 const PAGE = 120;
@@ -51,11 +51,19 @@ function card(it, now) {
     meta.append(t, el("span", "clock", etTime(it.time, now)));
   }
   const h = el("h2");
-  const link = el("a", null, it.title);
-  link.href = it.link; link.target = "_blank"; link.rel = "noopener noreferrer";
+  const link = el("a", "pq", it.title);
+  link.href = libraryLink(it.paper, it.title) || it.link;
+  link.target = "_blank"; link.rel = "noopener noreferrer";
+  link.dataset.title = it.title;
+  link.title = "Open in ProQuest through Arlington library sign-in";
   h.append(link);
   a.append(meta, h);
   if (it.description) a.append(el("p", "desc", it.description));
+  const pub = el("a", "pub", publisherLabel(it.paper) + " \u2197");
+  pub.href = it.link; pub.target = "_blank"; pub.rel = "noopener noreferrer";
+  const foot = el("div", "links");
+  foot.append(el("span", "via", "Library \u00b7 ProQuest"), pub);
+  a.append(foot);
   return a;
 }
 
@@ -123,6 +131,12 @@ async function load(fresh = false) {
   }
 }
 
+let toastTimer = 0;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+}
+
 function init() {
   readHash();
   $("#papers").addEventListener("click", (e) => {
@@ -132,6 +146,15 @@ function init() {
   $("#sections").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-section]"); if (!b) return;
     state.section = b.dataset.section; state.shown = PAGE; writeHash(); render(); scrollTo(0, 0);
+  });
+  // Tapping a headline also copies it, so it can be pasted into ProQuest's search box
+  // if ProQuest doesn't pre-fill the search (e.g. after signing in).
+  $("#list").addEventListener("click", (e) => {
+    const a = e.target.closest("a.pq"); if (!a) return;
+    const t = a.dataset.title;
+    if (t && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(() => toast("Headline copied \u2014 paste it into ProQuest search if needed"), () => {});
+    }
   });
   $("#more").addEventListener("click", () => { state.shown += PAGE; renderList(); });
   $("#refresh").addEventListener("click", () => load(true));

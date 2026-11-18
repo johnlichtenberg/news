@@ -1,6 +1,6 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
-import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, linkKey } from "../docs/lib.js";
+import { mergeItems, filterItems, sectionsFor, sectionLabel, relTime, etTime, linkKey, proquestQuery, proquestTarget, libraryLink, publisherLabel } from "../docs/lib.js";
 import { parseRss } from "../worker/parse.js";
 
 let n = 0;
@@ -56,12 +56,33 @@ const xml = `<rss><channel><item><title>X &amp; Y</title><link>https://www.nytim
 const merged = mergeItems([{ items: parseRss(xml, { paper: "NYT", section: "World" }) }]);
 eq(merged[0].title, "X & Y"); eq(merged[0].description, "Hi"); eq(merged[0].sections, ["World"]);
 
+// ProQuest library links
+eq(proquestQuery("Democrats Claim 56 Senate Seats"), '"Democrats Claim 56 Senate Seats"');
+eq(proquestQuery('He Said \u201cNo\u201d to "Them"'), '"He Said No to Them"', "inner quotes dropped");
+eq(proquestQuery("  "), "");
+eq(proquestTarget("NYT", "A & B?"), "https://www.proquest.com/nytimes/?accountid=57895&q=%22A%20%26%20B%3F%22");
+eq(proquestTarget("WSJ", "Stocks Rise"), "https://www.proquest.com/wallstreetjournal/?accountid=57895&q=%22Stocks%20Rise%22");
+eq(proquestTarget("XX", "t"), "");
+const lib = libraryLink("NYT", "A & B?");
+eq(lib, "https://library.access.arlingtonva.us/login?qurl=https%3A%2F%2Fwww.proquest.com%2Fnytimes%2F%3Faccountid%3D57895%26q%3D%2522A%2520%2526%2520B%253F%2522");
+const back = new URL(lib).searchParams.get("qurl");
+eq(back, proquestTarget("NYT", "A & B?"), "EZproxy decodes qurl once back to the exact target");
+eq(new URL(back).searchParams.get("q"), '"A & B?"', "ProQuest receives the quoted headline");
+eq(new URL(back).searchParams.get("accountid"), "57895");
+eq(new URL(lib).hostname, "library.access.arlingtonva.us");
+ok(!/pin|password|user|card/i.test(new URL(lib).search.replace(/qurl=.*/, "")), "no credentials in link");
+eq(libraryLink("WSJ", "x").startsWith("https://library.access.arlingtonva.us/login?qurl=https%3A%2F%2Fwww.proquest.com%2Fwallstreetjournal%2F"), true);
+eq(publisherLabel("NYT"), "nytimes.com"); eq(publisherLabel("WSJ"), "wsj.com");
+
 // page safety checks on the static files
 import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8");
 ok(!/innerHTML|insertAdjacentHTML|document\.write/.test(app), "DOM built with textContent only");
-ok(/rel = "noopener noreferrer"/.test(app), "story links use rel=noopener");
+ok((app.match(/rel = "noopener noreferrer"/g) || []).length >= 2, "headline + publisher links use rel=noopener");
+ok(/libraryLink\(it\.paper, it\.title\)/.test(app), "headline opens the library link");
+ok(/pub\.href = it\.link/.test(app), "secondary publisher link kept");
+ok(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(app), "nothing stored in the browser");
 for (const m of html.matchAll(/<a [^>]*>/g)) ok(/rel="noopener noreferrer"/.test(m[0]), "header link rel " + m[0]);
 ok(/connect-src https:\/\/news-feeds-relay\.johnlichtenberg\.workers\.dev;/.test(html), "CSP limits fetches to the relay");
 

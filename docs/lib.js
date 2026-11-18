@@ -84,3 +84,35 @@ export function etTime(time, now = Date.now()) {
   const same = dayFmt.format(time) === dayFmt.format(now);
   return (same ? "" : dateFmt.format(time) + ", ") + timeFmt.format(time) + " ET";
 }
+
+// --- Library (ProQuest) links -------------------------------------------------
+// Arlington's library offers NYT and WSJ through ProQuest behind its EZproxy sign-in.
+// John signs in himself; nothing here stores or sends credentials.
+export const LIBRARY_PROXY = "https://library.access.arlingtonva.us/login";
+export const PROQUEST_ACCOUNT = "57895";
+export const PROQUEST_PUBS = { NYT: "nytimes", WSJ: "wallstreetjournal" };
+
+// ProQuest search query for a headline: the exact headline as a quoted phrase.
+// Double quotes inside the headline would break the phrase, so they are dropped.
+export function proquestQuery(title) {
+  const t = String(title || "").replace(/["\u201c\u201d\u201e\u201f]/g, " ").replace(/\s+/g, " ").trim();
+  return t ? '"' + t + '"' : "";
+}
+
+// ProQuest target inside the publication, e.g.
+//   https://www.proquest.com/nytimes/?accountid=57895&q=%22Headline%22
+export function proquestTarget(paper, title) {
+  const pub = PROQUEST_PUBS[paper];
+  if (!pub) return "";
+  const q = proquestQuery(title);
+  return `https://www.proquest.com/${pub}/?accountid=${PROQUEST_ACCOUNT}` + (q ? "&q=" + encodeURIComponent(q) : "");
+}
+
+// Wrapped in the library's EZproxy sign-in. qurl= takes the target URL-encoded once more
+// (EZproxy decodes it exactly once), so the target's own %-escapes survive intact.
+export function libraryLink(paper, title) {
+  const target = proquestTarget(paper, title);
+  return target ? LIBRARY_PROXY + "?qurl=" + encodeURIComponent(target) : "";
+}
+
+export function publisherLabel(paper) { return paper === "WSJ" ? "wsj.com" : paper === "NYT" ? "nytimes.com" : "publisher"; }

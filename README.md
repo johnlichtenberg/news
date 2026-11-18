@@ -1,10 +1,18 @@
 # News headlines (NYT + WSJ)
 
-A small personal headlines page: https://johnlichtenberg.github.io/news-headlines/
+A small personal headlines page: https://johnlichtenberg.github.io/news/
 
 - Uses only the publishers' public RSS feeds: headline, the feed's own short description, section, and time.
-- Tapping a story opens it on nytimes.com or wsj.com. No article text is fetched, stored, or shown.
+- Tapping a headline opens a ProQuest search for it (inside the NYT or WSJ publication) through the
+  Arlington Public Library's EZproxy sign-in, and copies the headline to the clipboard. John signs in
+  himself; no credentials are stored anywhere. A small nytimes.com / wsj.com link opens the publisher page.
+- No article text is fetched, stored, or shown by this site.
 - The header links open the Arlington Public Library's NYT and WSJ access (ProQuest, card + PIN).
+- Library link format (`libraryLink` in `docs/lib.js`):
+  `https://library.access.arlingtonva.us/login?qurl=<encodeURIComponent(target)>` with target
+  `https://www.proquest.com/<nytimes|wallstreetjournal>/?accountid=57895&q=<encodeURIComponent('"headline"')>`.
+  The `q` parameter is unconfirmed (ProQuest needs a sign-in to test); if ProQuest ignores it, the
+  publication's search page opens and the copied headline can be pasted.
 
 ## How it works
 

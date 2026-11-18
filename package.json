@@ -1,5 +1,5 @@
 {
-  "name": "news-headlines",
+  "name": "news",
   "private": true,
   "type": "module",
   "scripts": { "test": "node worker/worker.test.mjs && node test/lib.test.mjs" }
