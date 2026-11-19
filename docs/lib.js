@@ -18,8 +18,7 @@ export function combineFeeds(results) {
     const rank = PAPERS.indexOf(res.paper) < 0 ? 99 : PAPERS.indexOf(res.paper);
     res.items.forEach((raw, i) => {
       if (!raw || !raw.title || !raw.link) return;
-      const t = Date.parse(raw.ts || "");
-      out.push({ paper: raw.paper || res.paper, title: raw.title, link: raw.link, doc: docId(raw.link), ts: Number.isFinite(t) ? t : null,
+      out.push({ paper: raw.paper || res.paper, title: raw.title, link: raw.link, doc: docId(raw.link),
         date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : "", rank, i });
     });
   }

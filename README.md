@@ -6,8 +6,9 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
   - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
     only the headline is kept)
-- Each article shows paper · date · time (ET), then the headline. The time is the feed's pubDate timestamp
-  (`ts`), shown only when the feed gave one; older items without it show just the date.
+- Each article shows paper · date, then the headline. No time is shown: the feed's pubDate timestamps are
+  ProQuest's batch load times (both papers arrive in the same few-minute windows about every 80–90 minutes), not
+  article publish times. The Worker reads pubDate as an ET day and keeps the timestamp internally as `ts`.
   Newest date first; within a date, by ProQuest docview id, highest first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
 - Each headline opens the exact article in ProQuest through the Arlington Public Library's EZproxy sign-in:
   `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.

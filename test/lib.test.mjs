@@ -26,7 +26,7 @@ const res = [
 const items = combineFeeds(res);
 eq(items.map((i) => i.title), ["W3", "W1", "N3", "N1", "W2 older", "N2 undated"],
   "newest date first; within a date docview id descending, papers mixed; undated last");
-eq(Object.keys(items[0]).sort(), ["date", "doc", "i", "link", "paper", "rank", "title", "ts"]);
+eq(Object.keys(items[0]).sort(), ["date", "doc", "i", "link", "paper", "rank", "title"], "no ts on page items: cards show paper and date only");
 eq(items[0].link, L(23));
 eq(filterItems(items, "NYT").map((i) => i.title), ["N3", "N1", "N2 undated"]);
 eq(filterItems(items, "WSJ").map((i) => i.title), ["W3", "W1", "W2 older"]);
@@ -57,8 +57,8 @@ eq(clockET(Date.parse("2026-11-18T07:28:00Z")), "2:28 AM ET");
 {
   const c = combineFeeds([{ paper: "NYT", items: [{ title: "t", date: "2026-11-18", ts: "2026-11-19T00:21:56.000Z", link: L(9) },
     { title: "u", date: "2026-11-18", link: L(8) }, { title: "v", date: "2026-11-18", ts: "nope", link: L(7) }] }]);
-  eq(c.map((i) => i.ts), [Date.parse("2026-11-19T00:21:56Z"), null, null], "ts parsed; missing/bad -> null (date only)");
-  eq(clockET(c[0].ts), "7:21 PM ET", "pubDate shown in ET");
+  ok(c.every((i) => !("ts" in i)), "Worker ts (ProQuest batch time) is not passed to cards");
+  eq(c.map((i) => i.date), ["2026-11-18", "2026-11-18", "2026-11-18"]);
 }
 
 // end to end: Worker parser output -> page list
