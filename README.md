@@ -6,8 +6,8 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
   - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
     only the headline is kept)
-- Each article shows its headline, paper and date. Newest date first; within a date, NYT then WSJ, each in the
-  feed's own order. Filters: All / NYT / WSJ.
+- Each article shows its headline, paper and date. Newest date first; within a date, by ProQuest docview id, highest
+  first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
 - Each headline opens the exact article in ProQuest through the Arlington Public Library's EZproxy sign-in:
   `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
   John signs in himself (card + PIN); no credentials are stored anywhere.

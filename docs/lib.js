@@ -3,8 +3,14 @@
 const TZ = "America/New_York";
 export const PAPERS = ["NYT", "WSJ"];
 
-// Combine the feed results into one list: newest date first; within a date, NYT's feed order then
-// WSJ's feed order (each feed's own order is kept). Undated items go last.
+// ProQuest docview id of a library link ("" if none), as a digit string.
+export const docId = (link) => (/\/docview\/(\d+)/.exec(link || "") || [])[1] || "";
+// Numeric descending compare of digit strings (no precision limit): longer is larger, then lexical.
+const byIdDesc = (a, b) => (b.length - a.length) || (b < a ? -1 : b > a ? 1 : 0);
+
+// Combine the feed results into one list: newest date first; within a date, ProQuest docview id descending
+// (numeric, NYT and WSJ mixed). Items without an id go after those with one in the same date, in NYT-then-WSJ
+// feed order. Undated items go last.
 export function combineFeeds(results) {
   const out = [];
   for (const res of results || []) {
@@ -12,11 +18,12 @@ export function combineFeeds(results) {
     const rank = PAPERS.indexOf(res.paper) < 0 ? 99 : PAPERS.indexOf(res.paper);
     res.items.forEach((raw, i) => {
       if (!raw || !raw.title || !raw.link) return;
-      out.push({ paper: raw.paper || res.paper, title: raw.title, link: raw.link,
+      out.push({ paper: raw.paper || res.paper, title: raw.title, link: raw.link, doc: docId(raw.link),
         date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : "", rank, i });
     });
   }
-  return out.sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.rank - b.rank || a.i - b.i);
+  return out.sort((a, b) => (b.date || "").localeCompare(a.date || "") ||
+    (!a.doc - !b.doc) || byIdDesc(a.doc, b.doc) || a.rank - b.rank || a.i - b.i);
 }
 
 export function filterItems(items, paper = "All") {
