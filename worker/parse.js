@@ -40,8 +40,16 @@ function tag(block, name) {
 // article's docview page behind the library proxy. Items are returned in the feed's own order.
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
+const etDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+// Item date as an ET calendar day (YYYY-MM-DD). ProQuest has sent both "Nov 18, 2026" and RFC 822 timestamps
+// ("Thu, 19 Nov 2026 00:21:56 GMT"); a timestamp is converted to the ET day it falls on.
 export function proquestDate(raw) {
-  const m = plainText(raw, 60).match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/);
+  const s = plainText(raw, 60);
+  if (/^[A-Za-z]{3},\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s+\d{1,2}:\d{2}/.test(s)) {
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? etDay.format(t) : null;
+  }
+  const m = s.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/);
   if (!m || !MONTHS[m[1].toLowerCase()]) return null;
   const mo = MONTHS[m[1].toLowerCase()], d = +m[2], y = +m[3];
   if (d < 1 || d > 31) return null;

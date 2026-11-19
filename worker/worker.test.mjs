@@ -43,6 +43,8 @@ eq(proquestLink("javascript:alert(1)"), "");
 eq(proquestLink("https://www.proquest.com/docview/abc"), "");
 eq(proquestLink("https://library.access.arlingtonva.us/login"), "");
 eq(proquestDate("Nov 18, 2026"), "2026-11-18"); eq(proquestDate("Sept 3, 2026"), "2026-09-03"); eq(proquestDate("garbage"), null);
+eq(proquestDate("Thu, 19 Nov 2026 00:21:56 GMT"), "2026-11-18", "RFC 822 timestamp -> ET day");
+eq(proquestDate("Thu, 19 Nov 2026 05:30:00 GMT"), "2026-11-19");
 eq(decodeEntities("&amp;lt;&#39;&bogus;"), "&lt;'&bogus;");
 eq(plainText("<b>a</b> &amp; b"), "a & b");
 
@@ -197,7 +199,8 @@ r = await worker.fetch(req("/feed/nyt-proquest"), env); j = await r.json();
 eq(j.latest, 1); eq(j.items.map((i) => i.title), ["Brand New", "Today's Headlines: Senate", "Second; not split for NYT"], "history keeps yesterday's items");
 
 // month endpoint and "older" months: seed an old shard + index directly
-kvStore.set("hist:nyt-proquest:2026-01", JSON.stringify({ items: [{ paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555), id: "5555", seen: 1 }] }));
+kvStore.set("hist:nyt-proquest:2026-01", JSON.stringify({ items: [{ paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555), id: "5555", seen: 1 },
+  { paper: "NYT", title: "Undated", date: null, link: LIB(5556), id: "5556", seen: Date.parse("2026-01-07T03:00:00Z") }] }));
 kvStore.set("idx:nyt-proquest", JSON.stringify({ months: [M, "2026-01"] }));
 _test.memo.clear();
 r = await worker.fetch(req("/feed/nyt-proquest"), env); j = await r.json();
@@ -205,7 +208,8 @@ eq(j.older, ["2026-01"], "older months listed for Load older");
 ok(!j.items.some((i) => i.title === "January story"), "old months not in the first response");
 const callsM = calls.length;
 r = await worker.fetch(req("/feed/nyt-proquest/2026-01"), env); j = await r.json();
-eq(r.status, 200); eq(j.month, "2026-01"); eq(j.items, [{ paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555) }]);
+eq(r.status, 200); eq(j.month, "2026-01"); eq(j.items, [{ paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555) },
+  { paper: "NYT", title: "Undated", date: "2026-01-06", link: LIB(5556) }], "undated stored item falls back to its first-seen ET day");
 ok(/max-age=3600/.test(r.headers.get("Cache-Control")), "past months cached longer");
 eq(calls.length, callsM, "month endpoint never fetches upstream");
 r = await worker.fetch(req("/feed/nyt-proquest/2025-02"), env); j = await r.json(); eq(j.items, [], "empty month");
