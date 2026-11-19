@@ -42,6 +42,7 @@ function card(it, now) {
   const meta = el("div", "meta");
   meta.append(el("span", "paper", it.paper));
   if (it.date) { const t = el("time", "when", dayLabel(it.date, now)); t.dateTime = it.date; meta.append(t); }
+  if (it.ts != null) { const t = el("time", "clock", clockET(it.ts)); t.dateTime = new Date(it.ts).toISOString(); meta.append(t); }
   const h = el("h2");
   const link = el("a", null, it.title);
   link.href = it.link; link.target = "_blank"; link.rel = "noopener noreferrer";

@@ -26,7 +26,7 @@ const res = [
 const items = combineFeeds(res);
 eq(items.map((i) => i.title), ["W3", "W1", "N3", "N1", "W2 older", "N2 undated"],
   "newest date first; within a date docview id descending, papers mixed; undated last");
-eq(Object.keys(items[0]).sort(), ["date", "doc", "i", "link", "paper", "rank", "title"]);
+eq(Object.keys(items[0]).sort(), ["date", "doc", "i", "link", "paper", "rank", "title", "ts"]);
 eq(items[0].link, L(23));
 eq(filterItems(items, "NYT").map((i) => i.title), ["N3", "N1", "N2 undated"]);
 eq(filterItems(items, "WSJ").map((i) => i.title), ["W3", "W1", "W2 older"]);
@@ -54,6 +54,12 @@ eq(dayLabel("2026-11-14", now), "Sat, Nov 14");
 eq(dayLabel("2025-12-31", now), "Wed, Dec 31, 2025");
 eq(dayLabel("", now), "Undated");
 eq(clockET(Date.parse("2026-11-18T07:28:00Z")), "2:28 AM ET");
+{
+  const c = combineFeeds([{ paper: "NYT", items: [{ title: "t", date: "2026-11-18", ts: "2026-11-19T00:21:56.000Z", link: L(9) },
+    { title: "u", date: "2026-11-18", link: L(8) }, { title: "v", date: "2026-11-18", ts: "nope", link: L(7) }] }]);
+  eq(c.map((i) => i.ts), [Date.parse("2026-11-19T00:21:56Z"), null, null], "ts parsed; missing/bad -> null (date only)");
+  eq(clockET(c[0].ts), "7:21 PM ET", "pubDate shown in ET");
+}
 
 // end to end: Worker parser output -> page list
 const xml = (paper) => `<rss><channel><item><title>ProQuest:${paper} A; sub</title><pubDate>Nov 18, 2026</pubDate><link>https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/${paper === "NYT" ? 111 : 222}?accountid=57895</link></item></channel></rss>`;

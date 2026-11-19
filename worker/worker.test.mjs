@@ -1,7 +1,7 @@
 // node worker/worker.test.mjs   (no network: global fetch is mocked)
 import assert from "node:assert/strict";
 import { FEEDS } from "./feeds.js";
-import { parseProquest, proquestLink, proquestDate, plainText, decodeEntities } from "./parse.js";
+import { parseProquest, proquestLink, proquestDate, proquestTs, plainText, decodeEntities } from "./parse.js";
 import { isSpanishTitle, isSpanishSource } from "./lang.js";
 import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
@@ -45,6 +45,14 @@ eq(proquestLink("https://library.access.arlingtonva.us/login"), "");
 eq(proquestDate("Nov 18, 2026"), "2026-11-18"); eq(proquestDate("Sept 3, 2026"), "2026-09-03"); eq(proquestDate("garbage"), null);
 eq(proquestDate("Thu, 19 Nov 2026 00:21:56 GMT"), "2026-11-18", "RFC 822 timestamp -> ET day");
 eq(proquestDate("Thu, 19 Nov 2026 05:30:00 GMT"), "2026-11-19");
+eq(proquestTs("Thu, 19 Nov 2026 00:21:56 GMT"), "2026-11-19T00:21:56.000Z"); eq(proquestTs("Nov 18, 2026"), null, "no time -> no ts");
+eq(proquestTs("garbage"), null);
+{
+  const x = `<rss><channel><item><title>Timed</title><pubDate>Thu, 19 Nov 2026 00:21:56 GMT</pubDate><link>https://www.proquest.com/docview/5001</link></item>` +
+    `<item><title>Dated</title><pubDate>Nov 18, 2026</pubDate><link>https://www.proquest.com/docview/5002</link></item></channel></rss>`;
+  const p = parseProquest(x, FEEDS[1]);
+  eq(p.map((i) => [i.date, i.ts]), [["2026-11-18", "2026-11-19T00:21:56.000Z"], ["2026-11-18", undefined]], "ts only when pubDate has a time");
+}
 eq(decodeEntities("&amp;lt;&#39;&bogus;"), "&lt;'&bogus;");
 eq(plainText("<b>a</b> &amp; b"), "a & b");
 
@@ -94,6 +102,13 @@ const it = (id, date, title = "T" + id) => ({ paper: "NYT", title, date, link: L
   eq(h2[1].title, "T111 fixed"); eq(h2[1].seen, T, "first-seen kept");
   ok(changed(h1, h2)); ok(!changed(h2, mergeShard(h2, [it(113, "2026-11-18"), it(111, "2026-11-18", "T111 fixed")], [], T)), "same batch -> no write");
   eq(mergeShard([], [it(1, "2025-01-01")], [], T).length, 1, "old dates are never dropped");
+  // ts: filled from the live feed when it has one, kept once stored, never invented
+  const ts = "2026-11-19T00:21:56.000Z";
+  const t1 = mergeShard(h2, [{ ...it(112, "2026-11-18"), ts }], [], T);
+  eq(t1.find((i) => i.id === "112").ts, ts, "ts filled for an already stored item still in the feed");
+  ok(!("ts" in t1.find((i) => i.id === "113")), "no ts invented for items without one");
+  ok(changed(h2, t1), "filling ts triggers a write");
+  eq(mergeShard(t1, [it(112, "2026-11-18")], [], T).find((i) => i.id === "112").ts, ts, "stored ts kept");
   eq(mergeShard([], [it(5, "2026-10-31"), it(6, "2026-11-01")], [{ id: "5" }], T).map((i) => i.id), ["6"], "items already in last month's shard are not duplicated");
   eq(mergeShard([], [{ paper: "NYT", title: "x", date: "2026-11-18", link: "bad" }], [], T), [], "items without docview id ignored");
   eq(mergeShard([], [it(5, "2026-11-18"), it(5, "2026-11-18")], [], T).length, 1, "dedupe by docview id");

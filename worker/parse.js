@@ -56,6 +56,14 @@ export function proquestDate(raw) {
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+// Full pubDate timestamp as ISO (UTC), only when the feed gives a time (RFC 822); otherwise null. Never invented.
+export function proquestTs(raw) {
+  const s = plainText(raw, 60);
+  if (!/^[A-Za-z]{3},\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s+\d{1,2}:\d{2}/.test(s)) return null;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
 // Exact article link in the library proxy form: login?url=https://www.proquest.com/docview/<id>?accountid=57895
 export function proquestLink(raw) {
   const s = plainText(raw, 2000);
@@ -85,7 +93,8 @@ export function parseProquest(xml, feed, limit = 100) {
     if (feed.excludeSpanish && isSpanishTitle(title)) continue; // NYT en Español
     if (seen.has(link)) continue;
     seen.add(link);
-    out.push({ paper: feed.paper, title, date: proquestDate(tag(block, "pubDate")), link });
+    const pub = tag(block, "pubDate"), ts = proquestTs(pub);
+    out.push({ paper: feed.paper, title, date: proquestDate(pub), ...(ts ? { ts } : {}), link });
   }
   return out;
 }

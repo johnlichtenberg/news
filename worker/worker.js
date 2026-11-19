@@ -26,8 +26,9 @@ function json(obj, status, headers, maxAge = TTL) {
 
 // Items stored while the feed's dates could not be read fall back to the ET day they were first seen.
 const seenDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
-const publicItems = (items) => items.map(({ paper, title, date, link, seen }) =>
-  ({ paper, title, date: date || (Number.isFinite(seen) ? seenDay.format(seen) : null), link }));
+// ts (ISO pubDate timestamp) is included only when the feed gave one.
+const publicItems = (items) => items.map(({ paper, title, date, ts, link, seen }) =>
+  ({ paper, title, date: date || (Number.isFinite(seen) ? seenDay.format(seen) : null), ...(ts ? { ts } : {}), link }));
 
 // Fetch one feed, merge into history (writes only the current month's shard, only if changed) and return
 // the recent history: this month's and last month's shards, plus the list of all stored months.

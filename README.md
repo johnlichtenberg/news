@@ -6,8 +6,9 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
   - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
     only the headline is kept)
-- Each article shows its headline, paper and date. Newest date first; within a date, by ProQuest docview id, highest
-  first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
+- Each article shows paper · date · time (ET), then the headline. The time is the feed's pubDate timestamp
+  (`ts`), shown only when the feed gave one; older items without it show just the date.
+  Newest date first; within a date, by ProQuest docview id, highest first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
 - Each headline opens the exact article in ProQuest through the Arlington Public Library's EZproxy sign-in:
   `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
   John signs in himself (card + PIN); no credentials are stored anywhere.
@@ -30,12 +31,13 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   Results are cached for 5 minutes.
   - `GET /feeds` lists the feed ids.
   - `GET /feed/<id>` refreshes the feed and returns this month's and last month's history
-    (`items`: paper, title, date, link; `latest`: items in the live feed now; `months`: all stored months;
+    (`items`: paper, title, date, optional `ts` (ISO pubDate), link; `latest`: items in the live feed now; `months`: all stored months;
     `older`: months not included, for "Load older").
   - `GET /feed/<id>/<YYYY-MM>` returns one stored month (no upstream fetch).
 - History (kept forever): Workers KV namespace `news-feeds-relay-NEWS_HISTORY` (binding `NEWS_HISTORY`,
   id `64d4a2262065442ca10a11f79c670480`; not x-text's `ARCHIVE`), sharded by month so no value nears KV's 25 MB limit:
-  - `hist:<feed id>:<YYYY-MM>`: `{ updated, items: [{ paper, title, date, link, id, seen }] }` (id = docview id,
+  - `hist:<feed id>:<YYYY-MM>`: `{ updated, items: [{ paper, title, date, ts?, link, id, seen }] }` (id = docview id, ts = pubDate timestamp
+    when the feed gave one, filled in later if the live feed still has the item,
     seen = first-seen time). An item goes in the shard of the month (ET) it was first seen and is never duplicated.
   - `idx:<feed id>`: `{ updated, months: [newest first] }`.
   - Each fetch merges the live batch into the current month's shard only, and writes only when it changed. The

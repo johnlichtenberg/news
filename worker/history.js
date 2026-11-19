@@ -25,7 +25,8 @@ export function mergeShard(shard, fresh, older = [], now = Date.now()) {
     if (!id || seen.has(id) || (skip.has(id) && !prev.has(id))) continue;
     seen.add(id);
     const old = prev.get(id);
-    out.push({ paper: it.paper, title: it.title, date: it.date || (old && old.date) || null, link: it.link, id,
+    const ts = it.ts || (old && old.ts) || null; // filled from the live feed when it has a time; never invented
+    out.push({ paper: it.paper, title: it.title, date: it.date || (old && old.date) || null, ...(ts ? { ts } : {}), link: it.link, id,
       seen: (old && old.seen) || now });
   }
   for (const it of shard || []) {
@@ -36,7 +37,7 @@ export function mergeShard(shard, fresh, older = [], now = Date.now()) {
   return out;
 }
 
-const sig = (items) => JSON.stringify((items || []).map((i) => [i.id, i.title, i.date]));
+const sig = (items) => JSON.stringify((items || []).map((i) => [i.id, i.title, i.date, i.ts || null]));
 export const changed = (a, b) => sig(a) !== sig(b);
 
 async function getJSON(kv, key) {
