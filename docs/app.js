@@ -149,21 +149,24 @@ async function load(fresh = false) {
   }
 }
 
-let searchTimer = 0, searchAbort = null, searchGen = 0;
+let searchAbort = null, searchGen = 0;
 function onQueryInput() {
   state.q = $("#q").value;
   const q = state.q.trim();
-  if (q.length < 3) { state.hits = []; state.notice = ""; state.searching = false; if (searchAbort) searchAbort.abort(); }
+  // Typing filters saved headlines only. Full-text results from an earlier query no longer apply.
+  if (q !== state.hitsQ) { state.hits = []; state.notice = ""; state.searching = false; searchGen++; if (searchAbort) searchAbort.abort(); }
   render();
   if (q) loadAllOlder();
-  scheduleRemoteSearch();
 }
 
-function scheduleRemoteSearch() {
-  clearTimeout(searchTimer);
-  const q = (state.q || "").trim();
+// Full-text (relay) search runs only when the keyboard's Search / Enter key is pressed.
+function submitSearch(e) {
+  if (e) e.preventDefault();
+  const q = ($("#q").value || "").trim();
+  state.q = $("#q").value;
   if (q.length < 3) return;
-  searchTimer = setTimeout(() => remoteSearch(q), 700);
+  $("#q").blur();
+  remoteSearch(q);
 }
 
 async function remoteSearch(q) {
@@ -176,6 +179,7 @@ async function remoteSearch(q) {
     const j = await getJSON("/search?q=" + encodeURIComponent(q), true, ac.signal);
     if (gen !== searchGen || state.q.trim() !== q) return;
     state.hits = Array.isArray(j.items) ? j.items : [];
+    state.hitsQ = q;
     state.notice = typeof j.notice === "string" ? j.notice : "";
     if (/\bbusy\b/i.test(state.notice)) {
       await new Promise((r) => setTimeout(r, 3000));
@@ -202,6 +206,7 @@ function init() {
     state.paper = b.dataset.paper; writeHash(); render(); scrollTo(0, 0);
   });
   $("#q").addEventListener("input", onQueryInput);
+  $("#q").addEventListener("keydown", (e) => { if (e.key === "Enter") submitSearch(e); });
   $("#refresh").addEventListener("click", () => load(true));
   $("#older").addEventListener("click", loadOlder);
   addEventListener("hashchange", () => { readHash(); render(); });
