@@ -163,7 +163,7 @@ function scheduleRemoteSearch() {
   clearTimeout(searchTimer);
   const q = (state.q || "").trim();
   if (q.length < 3) return;
-  searchTimer = setTimeout(() => remoteSearch(q), 250);
+  searchTimer = setTimeout(() => remoteSearch(q), 700);
 }
 
 async function remoteSearch(q) {
@@ -177,6 +177,14 @@ async function remoteSearch(q) {
     if (gen !== searchGen || state.q.trim() !== q) return;
     state.hits = Array.isArray(j.items) ? j.items : [];
     state.notice = typeof j.notice === "string" ? j.notice : "";
+    if (/\bbusy\b/i.test(state.notice)) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (gen !== searchGen || state.q.trim() !== q) return;
+      const j2 = await getJSON("/search?q=" + encodeURIComponent(q), true, ac.signal);
+      if (gen !== searchGen || state.q.trim() !== q) return;
+      state.hits = Array.isArray(j2.items) ? j2.items : [];
+      state.notice = typeof j2.notice === "string" ? j2.notice : "";
+    }
   } catch (e) {
     if (e.name === "AbortError") return;
     if (gen !== searchGen) return;

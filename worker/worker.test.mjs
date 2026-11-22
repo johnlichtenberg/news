@@ -473,6 +473,21 @@ _test.live.lastLive.at = 0;
 r = await worker.fetch(req("/search?q=climate"), liveEnv); j = await r.json();
 eq(j.cached, true); eq(j.items.length, 2);
 eq(pqCalls.length, callsAfter, "cached query does not hit ProQuest again");
+// A second query arriving during the 3s spacing window used to return
+// "busy" and fall back to headlines (often none). It should wait, then search.
+const prevSleep = _test.live.sleep;
+let slept = 0;
+_test.live.sleep = async (ms) => { slept = ms; };
+_test.live.lastLive.at = Date.now() - 500;
+const callsBeforeWait = pqCalls.length;
+r = await worker.fetch(req("/search?q=Reimann"), liveEnv); j = await r.json();
+eq(r.status, 200);
+eq(j.source, "proquest");
+eq(j.ok, true);
+ok(!/busy/i.test(j.notice || ""), "spacing no longer returns a busy notice");
+ok(slept > 0 && slept <= 3000, "waited out the remaining spacing");
+ok(pqCalls.length > callsBeforeWait, "after waiting, the new query is searched");
+_test.live.sleep = prevSleep;
 globalThis.fetch = prevFetch;
 _test.live.lastLive.at = 0;
 

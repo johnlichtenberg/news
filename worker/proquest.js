@@ -382,7 +382,11 @@ export async function takeQuota(kv, n, now = Date.now()) {
 }
 
 const lastLive = { at: 0 };
-export const _live = { lastLive };
+export const _live = {
+  lastLive,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
 
 export function spacingBlocked(now = Date.now()) {
   return now - lastLive.at < SPACING_MS;
@@ -397,8 +401,16 @@ export async function liveSearch(env, query, now = Date.now()) {
   const user = env && env.LIB_USER, pin = env && env.LIB_PIN;
   if (!user || !pin) return { ok: false, error: "not configured", items: [] };
 
+  // If another live search just started, wait it out and recheck the cache
+  // instead of failing with "busy". Typing a word can fire two queries a
+  // fraction of a second apart; the second used to show no results.
   if (spacingBlocked(now)) {
-    return { ok: false, error: "busy", items: [], notice: "Full-text search is busy; showing headlines." };
+    const wait = SPACING_MS - (now - lastLive.at);
+    if (wait > 0) await _live.sleep(wait);
+    const again = await cachedHits(kv, query);
+    if (again && Array.isArray(again.items)) {
+      return { ok: true, items: again.items, source: "proquest", cached: true };
+    }
   }
 
   const budget = await takeQuota(kv, 1, now); // reserve; we'll add remaining after
