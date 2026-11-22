@@ -6,7 +6,7 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
   - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
     only the headline is kept)
-- A search box at the top filters headlines instantly (case-insensitive, multi-word AND, quoted phrases). When a search is active, older months are loaded so every stored headline is searchable. Queries of three or more characters also call the Worker’s `/search`, which looks at privately stored article text and may add a short snippet under the headline. Full article text is never on the page, in the repo, or in the API response.
+- A search box at the top filters headlines instantly (case-insensitive, multi-word AND, quoted phrases). When a search is active, older months are loaded so every stored headline is searchable. Queries of three or more characters also call the Worker’s `/search`, which signs into ProQuest through the Arlington library EZproxy and runs a full-text search of the NYT and WSJ publication pages. Matching results (including ones not already on the page) show the headline plus a short snippet. If live search is unavailable, the box falls back to headlines and shows a quiet notice. Full article text is never on the page, in the repo, or in the API response.
 - Each article shows paper · date, then the headline. No time is shown: the feed's pubDate timestamps are
   ProQuest's batch load times (both papers arrive in the same few-minute windows about every 80–90 minutes), not
   article publish times. The Worker reads pubDate as an ET day and keeps the timestamp internally as `ts`.
@@ -28,8 +28,9 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
 ## How it works
 
 - `docs/` is the static site (GitHub Pages, `main` branch, `/docs`).
-- `worker/` is the Cloudflare Worker `news-feeds-relay` (free plan). The `TEXT_TOKEN` secret guards `POST /text`
-  and is not in the repo.
+- `worker/` is the Cloudflare Worker `news-feeds-relay` (free plan). Secrets (not in the repo): `TEXT_TOKEN` guards
+  `POST /text`; `LIB_USER` and `LIB_PIN` are the Arlington library username and PIN used only by the Worker to sign
+  into EZproxy for live search.
   Browsers can't read RSS cross-origin, so the page asks the Worker. The Worker only fetches the two
   feeds in `worker/feeds.js`, parses them to JSON, and allows only `https://johnlichtenberg.github.io`.
   Results are cached for 5 minutes.
@@ -38,9 +39,11 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
     (`items`: paper, title, date, optional `ts` (ISO pubDate), link; `latest`: items in the live feed now; `months`: all stored months;
     `older`: months not included, for "Load older").
   - `GET /feed/<id>/<YYYY-MM>` returns one stored month (no upstream fetch).
-  - `GET /search?q=...` (3–200 characters, rate limited, allowed origin only) searches stored headlines and
-    any privately stored article text. It returns only matches: `{ id, paper, date, title, link, snippet? }`.
-    `snippet` is at most ~200 characters around the match, and only when the body matched. Full text is never returned.
+  - `GET /search?q=...` (3–200 characters, rate limited, allowed origin only) runs a live ProQuest full-text search
+    of NYT and WSJ (session cookie cached in KV, results cached for an hour, about 1 live search every few seconds,
+    daily cap of about 200 upstream requests). It returns only matches: `{ id, paper, date, title, link, snippet? }`.
+    `snippet` is at most ~200 characters around the match. NYT en Español results are dropped. If ProQuest fails,
+    it falls back to stored headlines and sets `notice`. Full text is never returned.
   - `POST /text` (bearer token, see `TEXT-INGEST.md`) writes `{ id, text }` to KV as `text:<docviewId>`.
 - History (kept forever): Workers KV namespace `news-feeds-relay-NEWS_HISTORY` (binding `NEWS_HISTORY`,
   id `64d4a2262065442ca10a11f79c670480`; not x-text's `ARCHIVE`), sharded by month so no value nears KV's 25 MB limit:

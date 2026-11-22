@@ -156,6 +156,8 @@ ok(/id="q"/.test(html) && /type="search"/.test(html), "search box at the top of 
 ok(/\/search\?q=/.test(app), "page calls /search for body-text matches");
 ok(/el\("p", "snippet"/.test(app), "snippets are rendered with textContent");
 ok(!/TEXT_TOKEN|Authorization:/.test(app + html), "page has no ingest token");
+ok(/state\.notice/.test(app) && /j\.notice/.test(app), "page shows the Worker search notice");
+ok(!/LIB_PIN|LIB_USER/.test(app + html), "page has no library secrets");
 ok(!/localStorage|sessionStorage/.test(readFileSync(new URL("../docs/lib.js", import.meta.url), "utf8")), "lib stores nothing");
 
 console.log(`page tests: ${n} passed`);

@@ -9,7 +9,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 // results: feed id -> latest /feed/<id> response (this month + last month).
 // extra: feed id -> Map(month -> items) for months fetched with "Load older" (or all months, when searching).
-const state = { results: new Map(), extra: new Map(), items: [], paper: "All", q: "", hits: [],
+const state = { results: new Map(), extra: new Map(), items: [], paper: "All", q: "", hits: [], notice: "",
   loading: false, loadingOlder: false, loadingAllOlder: false, searching: false,
   loadedAt: 0, failed: [], total: 0 };
 
@@ -102,7 +102,8 @@ function render() {
   const s = $("#status");
   if (state.loading) s.textContent = `Loading feeds\u2026 ${state.results.size}/${state.total || "?"}`;
   else if (state.loadingAllOlder) s.textContent = "Loading older months for search\u2026";
-  else if (state.searching) s.textContent = "Searching article text\u2026";
+  else if (state.searching) s.textContent = "Searching full text\u2026";
+  else if (state.notice) s.textContent = state.notice;
   else if (state.loadedAt) s.textContent = `Updated ${clockET(state.loadedAt)}` + (state.failed.length ? ` \u00b7 couldn't load: ${state.failed.join(", ")}` : "");
   else s.textContent = "";
 }
@@ -145,7 +146,7 @@ let searchTimer = 0, searchAbort = null, searchGen = 0;
 function onQueryInput() {
   state.q = $("#q").value;
   const q = state.q.trim();
-  if (q.length < 3) { state.hits = []; state.searching = false; if (searchAbort) searchAbort.abort(); }
+  if (q.length < 3) { state.hits = []; state.notice = ""; state.searching = false; if (searchAbort) searchAbort.abort(); }
   render();
   if (q) loadAllOlder();
   scheduleRemoteSearch();
@@ -168,6 +169,7 @@ async function remoteSearch(q) {
     const j = await getJSON("/search?q=" + encodeURIComponent(q), true, ac.signal);
     if (gen !== searchGen || state.q.trim() !== q) return;
     state.hits = Array.isArray(j.items) ? j.items : [];
+    state.notice = typeof j.notice === "string" ? j.notice : "";
   } catch (e) {
     if (e.name === "AbortError") return;
     if (gen !== searchGen) return;

@@ -1,12 +1,14 @@
 // news-feeds-relay: fetches John's two public ProQuest RSS alert feeds (fixed whitelist), merges them into a
 // permanent history in Workers KV (monthly shards, see history.js), and returns it as JSON (paper, headline,
 // date, library article link) to the News page. A free cron trigger refreshes both feeds every 30 minutes.
-// Private article text (search.js) is stored only in KV and never returned in full; GET /search yields matches
-// with a short snippet, and POST /text (bearer token) is how a fetcher writes text:<docviewId>.
+// GET /search signs into ProQuest through EZproxy (LIB_USER / LIB_PIN secrets) and returns headline + snippet
+// matches. Full article text is never stored or returned. If live search fails, it falls back to stored headlines.
+// POST /text (bearer token) can still write private text:<docviewId> for the older stored-text path.
 import { FEEDS } from "./feeds.js";
 import { parseProquest, keepItem } from "./parse.js";
 import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth } from "./history.js";
 import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
+import { liveSearch, _live } from "./proquest.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -41,9 +43,16 @@ async function handleSearch(request, url, env, h) {
   if (rl.limited) {
     return json({ ok: false, error: "rate limited", items: [] }, 429, { ...h, "Retry-After": String(rl.retryAfter) }, 0);
   }
-  if (!env.NEWS_HISTORY) return json({ ok: true, q, items: [] }, 200, h, 0);
-  const items = await runSearch(env.NEWS_HISTORY, q);
-  return json({ ok: true, q, items }, 200, h, 0);
+  let live;
+  try { live = await liveSearch(env, q); }
+  catch { live = { ok: false, items: [], notice: "Full-text search is unavailable; showing headlines." }; }
+  if (live && live.ok) {
+    return json({ ok: true, q, items: live.items, source: "proquest",
+      ...(live.cached ? { cached: true } : {}), ...(live.notice ? { notice: live.notice } : {}) }, 200, h, 0);
+  }
+  const items = env.NEWS_HISTORY ? await runSearch(env.NEWS_HISTORY, q) : [];
+  const notice = (live && live.notice) || "Full-text search is unavailable; showing headlines.";
+  return json({ ok: true, q, items, source: "headlines", notice }, 200, h, 0);
 }
 
 async function handlePostText(request, env, h) {
@@ -160,4 +169,4 @@ export default {
   },
 };
 
-export const _test = { memo, stats, rate: _rate };
+export const _test = { memo, stats, rate: _rate, live: _live };

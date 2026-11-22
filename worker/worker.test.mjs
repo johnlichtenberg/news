@@ -6,6 +6,7 @@ import { isSpanishTitle, isSpanishSource } from "./lang.js";
 import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
+import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey } from "./proquest.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -356,6 +357,124 @@ ok(!j.items.some((i) => i.id === "5556"));
 
 // POST /feeds is still rejected
 r = await worker.fetch(req("/feeds", { method: "POST" }), env); eq(r.status, 405);
+
+
+
+// --- live ProQuest result parsing (synthetic HTML; no article text from ProQuest) ---
+eq(cleanTitle("Democrats Fortify Legal Shield: [National Desk]"), "Democrats Fortify Legal Shield");
+eq(parseCiteDate("New York Times ; New York (Nov 22, 2026): 6-8."), "2026-11-22");
+eq(parseCiteDate("Wall Street Journal, Eastern edition; 22 Nov 2026: A1."), "2026-11-22");
+eq(classifyPaper("New York Times Magazine ; New York", "NYT"), "NYT");
+eq(classifyPaper("Wall Street Journal (Online)", "WSJ"), "WSJ");
+eq(classifyPaper("New York Times en Español ; New York", "NYT"), "", "Español source dropped");
+eq(looksLikeLogin('<form><input name="pass" type="password"></form>'), true);
+ok(!looksLikeChallenge("<html>Search Results</html>"));
+
+const FIXTURE = `<html><title>Search Results</title><ul class="resultItems">
+<li class="resultItem ltr "><div class="truncatedResultsTitle">Climate Bill Passes: [National Desk]</div>
+<span>New York Times (Online); New York (Nov 21, 2026): n/a.</span>
+<span class="snippet"><p>The <em><span class="hit">climate</span></em> bill passed after late talks in the chamber...</p></span>
+<a href="/nytimes/docview/3410001111/ABC/1?accountid=57895">Full Text</a></li>
+<li class="resultItem ltr "><div class="truncatedResultsTitle">Markets Rally on Rate Cut</div>
+<span>Wall Street Journal (Online); New York (Nov 20, 2026).</span>
+<span class="snippet"><p>Traders cited the <em>climate</em> bill as a reason markets rallied...</p></span>
+<a href="/wallstreetjournal/docview/3410002222/ABC/2?accountid=57895">Full Text</a></li>
+<li class="resultItem ltr "><div class="truncatedResultsTitle">El gobierno anuncia una nueva crisis climática</div>
+<span>New York Times en Español; New York (Nov 19, 2026).</span>
+<span class="snippet"><p>Una nota en español about climate.</p></span>
+<a href="/nytimes/docview/3410003333/ABC/3?accountid=57895">Full Text</a></li>
+</ul></html>`;
+const parsed = parseResults(FIXTURE, "NYT");
+eq(parsed.map((i) => i.id), ["3410001111", "3410002222"], "Español result dropped");
+eq(parsed[0].paper, "NYT"); eq(parsed[0].date, "2026-11-21");
+eq(parsed[0].title, "Climate Bill Passes", "desk suffix stripped");
+eq(parsed[1].paper, "WSJ"); eq(parsed[1].date, "2026-11-20");
+ok(parsed[0].snippet.toLowerCase().includes("climate"));
+ok(parsed[0].snippet.length <= 201);
+ok(parsed[0].link.includes("/docview/3410001111"));
+ok(!JSON.stringify(parsed).includes("en Español"), "Español cite not in public items");
+eq(mergeLiveHits([parsed, [{ id: "3410001111", paper: "NYT", date: "2026-11-21", title: "dup", link: LIB(3410001111) }]]).map((i) => i.id),
+  ["3410001111", "3410002222"], "merged unique, date then id");
+
+const formHtml = `<form id="searchForm" action="https://www-proquest-com.library.access.arlingtonva.us/index.searchform" method="post">
+<input type="hidden" name="_csrf" value="abc"/>
+<input type="hidden" name="site" value="nytimes"/>
+<input type="hidden" name="t:formdata" value="one"/>
+<textarea name="searchTerm"></textarea>
+<input type="hidden" name="t:formdata" value="two"/>
+<input type="checkbox" name="fullTextLimit" checked="checked"/>
+</form>`;
+const form = parseSearchForm(formHtml);
+eq(form.action.endsWith("/index.searchform"), true);
+const body = buildSearchBody(form, "climate bill");
+ok(body.includes("searchTerm=climate") && body.includes("fullTextLimit="), "search posts term and full-text flag");
+ok(body.includes("t%3Aformdata=one") && body.includes("t%3Aformdata=two"), "both tapestry formdata fields kept");
+
+const jar = collectCookies([], { headers: { getSetCookie: () => ["ezproxy=zzz; Path=/; Domain=.library.access.arlingtonva.us"] } },
+  "https://library.access.arlingtonva.us/login");
+eq(jar[0].name, "ezproxy");
+ok(cookieHeader(jar, "https://www-proquest-com.library.access.arlingtonva.us/nytimes/").includes("ezproxy=zzz"));
+ok(!cookieHeader(jar, "https://evil.example/").includes("ezproxy"));
+eq(snippetFrom("x".repeat(500), 200).replace(/\u2026$/, "").length <= 200, true);
+eq(cacheKey("  Climate   Bill "), "pqcache:climate bill");
+
+// /search without library secrets falls back to headlines and adds a quiet notice
+_test.live.lastLive.at = 0;
+r = await worker.fetch(req("/search?q=Senate"), env); j = await r.json();
+eq(j.source, "headlines");
+ok(typeof j.notice === "string" && /headline/i.test(j.notice), "fallback notice");
+ok(j.items.some((i) => i.title.includes("Senate")));
+
+// live path: mocked EZproxy + both publication searches
+const prevFetch = globalThis.fetch;
+const liveHtml = {
+  login: { status: 302, headers: { location: "https://login.library.access.arlingtonva.us/connect?session=abc&qurl=https://www.proquest.com/nytimes/", "set-cookie": "ezproxy=tok; Path=/; Domain=.library.access.arlingtonva.us" }, body: "" },
+  connect: { status: 302, headers: { location: "https://www-proquest-com.library.access.arlingtonva.us/nytimes/?accountid=57895" }, body: "" },
+  page: { status: 200, body: formHtml.replace("id=\"searchForm\"", "id=\"searchForm\"") + "<title>Basic Search</title>" },
+  results: { status: 200, body: FIXTURE, headers: { "content-type": "text/html" } },
+};
+function mockRes(spec) {
+  const headers = new Headers();
+  const h = spec.headers || {};
+  for (const [k,v] of Object.entries(h)) if (k !== "set-cookie") headers.set(k, v);
+  if (h["set-cookie"]) {
+    headers.set("set-cookie", h["set-cookie"]);
+    headers.getSetCookie = () => [h["set-cookie"]];
+  } else headers.getSetCookie = () => [];
+  return new Response(spec.body || "", { status: spec.status || 200, headers });
+}
+let pqCalls = [];
+globalThis.fetch = async (url, init) => {
+  const u = String(url);
+  pqCalls.push((init && init.method) || "GET", u.split("?")[0]);
+  if (u.includes("library.access.arlingtonva.us/login") && init && init.method === "POST") {
+    const body = String(init.body || "");
+    ok(!body.includes("LIB_PIN"), "PIN is form-encoded, not a secret name leak");
+    // body should have user= and pass= but we do not print it
+    ok(/user=/.test(body) && /pass=/.test(body), "login posts user and pass");
+    return mockRes(liveHtml.login);
+  }
+  if (u.includes("/connect")) return mockRes(liveHtml.connect);
+  if (/\/(nytimes|wallstreetjournal)\/?\?/.test(u) || /\/(nytimes|wallstreetjournal)\/$/.test(u)) return mockRes(liveHtml.page);
+  if (u.includes("index.searchform") || u.includes("/results/")) return mockRes(liveHtml.results);
+  return prevFetch(url, init);
+};
+const liveEnv = { ...env, LIB_USER: "john.lichtenberg", LIB_PIN: "not-the-real-pin" };
+_test.live.lastLive.at = 0;
+r = await worker.fetch(req("/search?q=climate"), liveEnv); j = await r.json();
+eq(r.status, 200); eq(j.source, "proquest"); eq(j.ok, true);
+eq(j.items.map((i) => i.id), ["3410001111", "3410002222"]);
+ok(!j.items.some((i) => i.id === "3410003333"), "live Español dropped");
+ok(!JSON.stringify(j).includes("not-the-real-pin"), "PIN never appears in /search JSON");
+ok(!j.items.some((i) => "text" in i));
+// second call is served from cache (no extra login)
+const callsAfter = pqCalls.length;
+_test.live.lastLive.at = 0;
+r = await worker.fetch(req("/search?q=climate"), liveEnv); j = await r.json();
+eq(j.cached, true); eq(j.items.length, 2);
+eq(pqCalls.length, callsAfter, "cached query does not hit ProQuest again");
+globalThis.fetch = prevFetch;
+_test.live.lastLive.at = 0;
 
 
 console.log(`worker tests: ${n} passed`);
