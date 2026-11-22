@@ -1,9 +1,12 @@
 // news-feeds-relay: fetches John's two public ProQuest RSS alert feeds (fixed whitelist), merges them into a
 // permanent history in Workers KV (monthly shards, see history.js), and returns it as JSON (paper, headline,
 // date, library article link) to the News page. A free cron trigger refreshes both feeds every 30 minutes.
+// Private article text (search.js) is stored only in KV and never returned in full; GET /search yields matches
+// with a short snippet, and POST /text (bearer token) is how a fetcher writes text:<docviewId>.
 import { FEEDS } from "./feeds.js";
 import { parseProquest, keepItem } from "./parse.js";
 import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth } from "./history.js";
+import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -17,11 +20,48 @@ function cors(env, origin) {
 }
 
 function json(obj, status, headers, maxAge = TTL) {
+  const cache = maxAge === 0 || status !== 200 ? "no-store" : `public, max-age=${maxAge}`;
   return new Response(JSON.stringify(obj), {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": status === 200 ? `public, max-age=${maxAge}` : "no-store", ...headers },
+      "Cache-Control": cache, ...headers },
   });
+}
+
+function clientKey(request) {
+  return request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "anon";
+}
+
+async function handleSearch(request, url, env, h) {
+  const q = (url.searchParams.get("q") || "").trim();
+  if (q.length < MIN_QUERY || q.length > MAX_QUERY) {
+    return json({ ok: false, error: "query too short or too long", items: [] }, 400, h, 0);
+  }
+  const rl = rateLimited(clientKey(request));
+  if (rl.limited) {
+    return json({ ok: false, error: "rate limited", items: [] }, 429, { ...h, "Retry-After": String(rl.retryAfter) }, 0);
+  }
+  if (!env.NEWS_HISTORY) return json({ ok: true, q, items: [] }, 200, h, 0);
+  const items = await runSearch(env.NEWS_HISTORY, q);
+  return json({ ok: true, q, items }, 200, h, 0);
+}
+
+async function handlePostText(request, env, h) {
+  const token = env.TEXT_TOKEN || "";
+  if (!token || !timingSafeEqual(bearerToken(request), token)) {
+    return json({ error: "unauthorized" }, 401, h, 0);
+  }
+  if (!env.NEWS_HISTORY) return json({ error: "storage unavailable" }, 503, h, 0);
+  const raw = await request.text();
+  if (raw.length > MAX_TEXT + 4096) return json({ error: "payload too large" }, 413, h, 0);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json({ error: "invalid json" }, 400, h, 0); }
+  const id = normalizeId(body && body.id);
+  const text = normalizeText(body && body.text);
+  if (!id || !text) return json({ error: "id and text required" }, 400, h, 0);
+  const st = await putArticleText(env.NEWS_HISTORY, id, text);
+  if (!st.ok) return json({ error: "write failed" }, 500, h, 0);
+  return json({ ok: true, id: st.id, month: st.month, found: st.found }, 200, h, 0);
 }
 
 // Items stored while the feed's dates could not be read fall back to the ET day they were first seen.
@@ -75,9 +115,13 @@ export default {
       return new Response(null, { status: ok ? 204 : 403, headers: { ...h,
         "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Max-Age": "86400" } });
     }
+    // Server-to-server ingest: bearer token, no browser Origin required. Never from the public page.
+    if (url.pathname === "/text" && request.method === "POST") return handlePostText(request, env, h);
     if (request.method !== "GET") return json({ error: "method not allowed" }, 405, h);
     if (!ok) return json({ error: "forbidden" }, 403, h);
 
+    if (url.pathname === "/search") return handleSearch(request, url, env, h);
+    if (url.pathname === "/text") return json({ error: "method not allowed" }, 405, h);
     if (url.pathname === "/feeds") {
       return json({ feeds: FEEDS.map(({ id, paper }) => ({ id, paper })) }, 200, h, 3600);
     }
@@ -116,4 +160,4 @@ export default {
   },
 };
 
-export const _test = { memo, stats };
+export const _test = { memo, stats, rate: _rate };

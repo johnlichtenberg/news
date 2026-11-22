@@ -1,31 +1,55 @@
-import { combineFeeds, filterItems, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel } from "./lib.js";
+import { combineFeeds, filterItems, filterByQuery, mergeSearchHits, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel } from "./lib.js";
 
 const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
+const LIB_PREFIX = "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/";
+const LIB_SUFFIX = "?accountid=57895";
+const libraryLink = (id) => LIB_PREFIX + id + LIB_SUFFIX;
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 // results: feed id -> latest /feed/<id> response (this month + last month).
-// extra: feed id -> Map(month -> items) for months fetched with "Load older".
-const state = { results: new Map(), extra: new Map(), items: [], paper: "All", loading: false, loadingOlder: false,
+// extra: feed id -> Map(month -> items) for months fetched with "Load older" (or all months, when searching).
+const state = { results: new Map(), extra: new Map(), items: [], paper: "All", q: "", hits: [],
+  loading: false, loadingOlder: false, loadingAllOlder: false, searching: false,
   loadedAt: 0, failed: [], total: 0 };
 
 function recompute() { state.items = combineFeeds(feedLists([...state.results.values()], state.extra)); }
 const olderMonth = () => nextOlderMonth([...state.results.values()], state.extra);
 
+async function loadMonth(month) {
+  await Promise.all([...state.results.values()].filter((res) => (res.older || []).includes(month)).map(async (res) => {
+    const r = await getJSON(`/feed/${encodeURIComponent(res.id)}/${month}`, false);
+    if (!state.extra.has(res.id)) state.extra.set(res.id, new Map());
+    state.extra.get(res.id).set(month, r.items || []);
+  }));
+}
+
 async function loadOlder() {
   const month = olderMonth();
-  if (!month || state.loadingOlder) return;
+  if (!month || state.loadingOlder || state.loadingAllOlder) return;
   state.loadingOlder = true; render();
   try {
-    await Promise.all([...state.results.values()].filter((res) => (res.older || []).includes(month)).map(async (res) => {
-      const r = await getJSON(`/feed/${encodeURIComponent(res.id)}/${month}`, false);
-      if (!state.extra.has(res.id)) state.extra.set(res.id, new Map());
-      state.extra.get(res.id).set(month, r.items || []);
-    }));
+    await loadMonth(month);
   } catch (e) {
     state.failed = ["older articles (" + e.message + ")"];
   } finally {
     state.loadingOlder = false; recompute(); render();
+  }
+}
+
+// History is small: when a search is active, load every remaining month so headlines are searchable.
+async function loadAllOlder() {
+  if (state.loadingAllOlder || !olderMonth()) return;
+  state.loadingAllOlder = true; render();
+  try {
+    while (olderMonth()) {
+      await loadMonth(olderMonth());
+      recompute(); render();
+    }
+  } catch (e) {
+    state.failed = ["older articles (" + e.message + ")"];
+  } finally {
+    state.loadingAllOlder = false; recompute(); render();
   }
 }
 
@@ -48,29 +72,43 @@ function card(it, now) {
   link.title = "Open in ProQuest (Arlington library sign-in)";
   h.append(link);
   a.append(meta, h);
+  if (it.snippet) a.append(el("p", "snippet", it.snippet));
   return a;
+}
+
+function visibleList() {
+  const q = (state.q || "").trim();
+  let list = filterItems(state.items, state.paper);
+  if (q) list = filterByQuery(list, q);
+  if (q.length >= 3) list = mergeSearchHits(list, state.hits, state.paper, libraryLink);
+  return list;
 }
 
 function render() {
   for (const b of document.querySelectorAll("#papers button")) b.setAttribute("aria-pressed", String(b.dataset.paper === state.paper));
   const now = Date.now();
-  const list = filterItems(state.items, state.paper);
+  const q = (state.q || "").trim();
+  const list = visibleList();
   const box = $("#list");
   box.replaceChildren(...list.map((it) => card(it, now)));
-  $("#empty").hidden = list.length > 0 || state.loading;
-  $("#count").textContent = list.length ? `${list.length} articles` : "";
+  const empty = $("#empty");
+  empty.hidden = list.length > 0 || state.loading;
+  empty.textContent = q ? "No matching articles." : "No articles right now.";
+  $("#count").textContent = list.length ? `${list.length} ${q ? "match" + (list.length === 1 ? "" : "es") : "article" + (list.length === 1 ? "" : "s")}` : "";
   const older = olderMonth(), btn = $("#older");
-  btn.hidden = !older || state.loading;
-  btn.disabled = state.loadingOlder;
+  btn.hidden = !older || state.loading || !!q;
+  btn.disabled = state.loadingOlder || state.loadingAllOlder;
   btn.textContent = state.loadingOlder ? "Loading\u2026" : older ? `Load older (${monthLabel(older)})` : "";
   const s = $("#status");
   if (state.loading) s.textContent = `Loading feeds\u2026 ${state.results.size}/${state.total || "?"}`;
+  else if (state.loadingAllOlder) s.textContent = "Loading older months for search\u2026";
+  else if (state.searching) s.textContent = "Searching article text\u2026";
   else if (state.loadedAt) s.textContent = `Updated ${clockET(state.loadedAt)}` + (state.failed.length ? ` \u00b7 couldn't load: ${state.failed.join(", ")}` : "");
   else s.textContent = "";
 }
 
-async function getJSON(path, fresh) {
-  const r = await fetch(RELAY + path, { cache: fresh ? "no-cache" : "default", mode: "cors", credentials: "omit" });
+async function getJSON(path, fresh, signal) {
+  const r = await fetch(RELAY + path, { cache: fresh ? "no-cache" : "default", mode: "cors", credentials: "omit", signal });
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -93,11 +131,49 @@ async function load(fresh = false) {
     }));
     for (const k of [...state.results.keys()]) if (!feeds.some((f) => f.id === k)) state.results.delete(k);
     state.loadedAt = Date.now();
+    if ((state.q || "").trim()) loadAllOlder();
   } catch (e) {
     state.failed = ["feeds (" + e.message + ")"];
   } finally {
     state.loading = false; btn.disabled = false; btn.classList.remove("spin");
     recompute();
+    render();
+  }
+}
+
+let searchTimer = 0, searchAbort = null, searchGen = 0;
+function onQueryInput() {
+  state.q = $("#q").value;
+  const q = state.q.trim();
+  if (q.length < 3) { state.hits = []; state.searching = false; if (searchAbort) searchAbort.abort(); }
+  render();
+  if (q) loadAllOlder();
+  scheduleRemoteSearch();
+}
+
+function scheduleRemoteSearch() {
+  clearTimeout(searchTimer);
+  const q = (state.q || "").trim();
+  if (q.length < 3) return;
+  searchTimer = setTimeout(() => remoteSearch(q), 250);
+}
+
+async function remoteSearch(q) {
+  if (searchAbort) searchAbort.abort();
+  const ac = new AbortController();
+  searchAbort = ac;
+  const gen = ++searchGen;
+  state.searching = true; render();
+  try {
+    const j = await getJSON("/search?q=" + encodeURIComponent(q), true, ac.signal);
+    if (gen !== searchGen || state.q.trim() !== q) return;
+    state.hits = Array.isArray(j.items) ? j.items : [];
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    if (gen !== searchGen) return;
+    // Headline matches stay; body-text hits are skipped when the relay fails.
+  } finally {
+    if (gen === searchGen) state.searching = false;
     render();
   }
 }
@@ -108,6 +184,7 @@ function init() {
     const b = e.target.closest("button[data-paper]"); if (!b) return;
     state.paper = b.dataset.paper; writeHash(); render(); scrollTo(0, 0);
   });
+  $("#q").addEventListener("input", onQueryInput);
   $("#refresh").addEventListener("click", () => load(true));
   $("#older").addEventListener("click", loadOlder);
   addEventListener("hashchange", () => { readHash(); render(); });

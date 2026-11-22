@@ -31,6 +31,10 @@
     <button type="button" data-paper="NYT" aria-pressed="false">NYT</button>
     <button type="button" data-paper="WSJ" aria-pressed="false">WSJ</button>
   </div>
+  <div class="search">
+    <label class="sr-only" for="q">Search headlines</label>
+    <input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Search headlines" aria-label="Search headlines">
+  </div>
 </header>
 <main>
   <p id="status" class="status" role="status" aria-live="polite"></p>
@@ -42,7 +46,7 @@
 <footer class="foot">
   Headlines come from your ProQuest RSS alerts for the New York Times (Online) and the Wall Street Journal (Online).
   Each headline opens that article in ProQuest through the Arlington library sign-in (card &amp; PIN).
-  Every headline is kept; this month and last month load first, and "Load older" adds earlier months.
+  Every headline is kept; this month and last month load first, and "Load older" adds earlier months. Search looks through headlines, and through article text kept privately on the relay (only a short snippet is shown).
 </footer>
 </body>
 </html>

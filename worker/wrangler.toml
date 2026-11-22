@@ -1,4 +1,5 @@
-# Cloudflare Worker for the NYT/WSJ headlines page (free plan, no bindings, no secrets).
+# Cloudflare Worker for the NYT/WSJ headlines page (free plan).
+# Secret TEXT_TOKEN (wrangler secret put) guards POST /text; it is not in this file.
 name = "news-feeds-relay"
 main = "worker.js"
 compatibility_date = "2025-09-01"

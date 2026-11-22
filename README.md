@@ -6,6 +6,7 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   - NYT: `https://feeds.proquest.com/rss/2310267` ("New York Times (Online)")
   - WSJ: `https://feeds.proquest.com/rss/2310287` ("Wall Street Journal (Online)"; titles are "Headline; subhead",
     only the headline is kept)
+- A search box at the top filters headlines instantly (case-insensitive, multi-word AND, quoted phrases). When a search is active, older months are loaded so every stored headline is searchable. Queries of three or more characters also call the Worker’s `/search`, which looks at privately stored article text and may add a short snippet under the headline. Full article text is never on the page, in the repo, or in the API response.
 - Each article shows paper · date, then the headline. No time is shown: the feed's pubDate timestamps are
   ProQuest's batch load times (both papers arrive in the same few-minute windows about every 80–90 minutes), not
   article publish times. The Worker reads pubDate as an ET day and keeps the timestamp internally as `ts`.
@@ -20,13 +21,15 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   headline: Spanish function words, ¿/¡ and accented letters, after removing Spanish place names common in English
   headlines (Los Angeles, El Paso, La Niña…). The Worker drops them from the live feed, removes any already stored
   in the current month on the next refresh, hides them when serving any month, and the cron purges older months.
-- Only headline, date and article link are used. No descriptions, abstracts or article text are fetched,
-  stored, or shown.
+- The public page and the repo store only headline, date and article link. Article text, when a fetcher
+  has posted it, is kept privately in Workers KV (`text:<docviewId>`) and is used only for `/search`.
+  See `TEXT-INGEST.md`. The RSS parser still never reads descriptions, abstracts, or full text from the feed.
 
 ## How it works
 
 - `docs/` is the static site (GitHub Pages, `main` branch, `/docs`).
-- `worker/` is the Cloudflare Worker `news-feeds-relay` (free plan, no bindings or secrets).
+- `worker/` is the Cloudflare Worker `news-feeds-relay` (free plan). The `TEXT_TOKEN` secret guards `POST /text`
+  and is not in the repo.
   Browsers can't read RSS cross-origin, so the page asks the Worker. The Worker only fetches the two
   feeds in `worker/feeds.js`, parses them to JSON, and allows only `https://johnlichtenberg.github.io`.
   Results are cached for 5 minutes.
@@ -35,12 +38,18 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
     (`items`: paper, title, date, optional `ts` (ISO pubDate), link; `latest`: items in the live feed now; `months`: all stored months;
     `older`: months not included, for "Load older").
   - `GET /feed/<id>/<YYYY-MM>` returns one stored month (no upstream fetch).
+  - `GET /search?q=...` (3–200 characters, rate limited, allowed origin only) searches stored headlines and
+    any privately stored article text. It returns only matches: `{ id, paper, date, title, link, snippet? }`.
+    `snippet` is at most ~200 characters around the match, and only when the body matched. Full text is never returned.
+  - `POST /text` (bearer token, see `TEXT-INGEST.md`) writes `{ id, text }` to KV as `text:<docviewId>`.
 - History (kept forever): Workers KV namespace `news-feeds-relay-NEWS_HISTORY` (binding `NEWS_HISTORY`,
   id `64d4a2262065442ca10a11f79c670480`; not x-text's `ARCHIVE`), sharded by month so no value nears KV's 25 MB limit:
   - `hist:<feed id>:<YYYY-MM>`: `{ updated, items: [{ paper, title, date, ts?, link, id, seen }] }` (id = docview id, ts = pubDate timestamp
     when the feed gave one, filled in later if the live feed still has the item,
     seen = first-seen time). An item goes in the shard of the month (ET) it was first seen and is never duplicated.
   - `idx:<feed id>`: `{ updated, months: [newest first] }`.
+  - `text:<docviewId>`: private article text (written only by `POST /text`). Also a monthly index `textm:<YYYY-MM>`
+    so `/search` does not need a KV read per article. These keys are never served in full.
   - Each fetch merges the live batch into the current month's shard only, and writes only when it changed. The
     index is written once per feed per month. If ProQuest is down, the stored history is still served.
 - Free Workers cron `*/30 * * * *` (every 30 minutes, UTC) refreshes both feeds so history fills in between visits.

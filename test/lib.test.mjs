@@ -1,7 +1,7 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { combineFeeds, filterItems, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel } from "../docs/lib.js";
+import { combineFeeds, filterItems, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel, parseQuery, queryMatches, filterByQuery, snippetAround, mergeSearchHits } from "../docs/lib.js";
 import { parseProquest } from "../worker/parse.js";
 import { FEEDS } from "../worker/feeds.js";
 
@@ -86,6 +86,57 @@ eq(e2e.map((i) => [i.paper, i.title, i.date, i.link]), [["WSJ", "WSJ A", "2026-1
   eq(monthLabel("2026-09"), "September 2026");
 }
 
+
+// --- search: quoted phrases, multi-word AND, case-insensitive ---
+eq(parseQuery("  Climate   BILL "), { phrases: [], words: ["climate", "bill"] });
+eq(parseQuery('"climate bill" Senate'), { phrases: ["climate bill"], words: ["senate"] });
+eq(parseQuery('""   "  " skip'), { phrases: [], words: ["skip"] });
+eq(parseQuery(""), { phrases: [], words: [] });
+ok(queryMatches("The Climate Bill Passes", parseQuery("climate bill")));
+ok(queryMatches("The Climate Bill Passes", parseQuery('"climate bill"')));
+ok(!queryMatches("Climate talks; a new bill", parseQuery('"climate bill"')), "phrase must be contiguous");
+ok(queryMatches("CLIMATE talks; a new BILL", parseQuery("climate bill")), "AND, case-insensitive");
+ok(!queryMatches("Climate talks only", parseQuery("climate bill")));
+eq(filterByQuery(items, "").map((i) => i.title), items.map((i) => i.title), "empty query does not filter");
+eq(filterByQuery(items, "w3").map((i) => i.title), ["W3"], "headline filter is case-insensitive");
+eq(filterByQuery(items, "older w2").map((i) => i.title), ["W2 older"], "multi-word AND");
+eq(filterByQuery(items, '"W2 older"').map((i) => i.title), ["W2 older"]);
+eq(filterByQuery(items, '"W2 older" missing').map((i) => i.title), []);
+
+{
+  const body = "AAAA ".repeat(80) + "the alpha-widget moss grows here only" + " ZZZZ ".repeat(80);
+  const sn = snippetAround(body, parseQuery("alpha-widget"), 200);
+  ok(sn.toLowerCase().includes("alpha-widget"), "snippet centered on the match");
+  ok([...sn].filter((c) => c !== "\u2026").length <= 200, "at most 200 characters of source text");
+  ok(sn.length < body.length, "snippet is not the full text");
+  eq(snippetAround(body, parseQuery("no-such-term"), 200), "");
+}
+
+{
+  const LIB2 = (id) => L(id);
+  const headlines = filterByQuery([
+    { paper: "NYT", title: "Climate Bill Passes", date: "2026-11-18", link: L(30), doc: "30", rank: 0, i: 0 },
+    { paper: "WSJ", title: "Markets Rally", date: "2026-11-18", link: L(40), doc: "40", rank: 1, i: 0 },
+    { paper: "NYT", title: "Old climate note", date: "2026-10-01", link: L(10), doc: "10", rank: 0, i: 0 },
+  ], "climate");
+  eq(headlines.map((i) => i.doc), ["30", "10"]);
+  const merged = mergeSearchHits(headlines, [
+    { id: "30", paper: "NYT", date: "2026-11-18", title: "Climate Bill Passes", snippet: "the chamber passed the climate bill after" },
+    { id: "40", paper: "WSJ", date: "2026-11-18", title: "Markets Rally", snippet: "traders cited the climate bill as a reason" },
+    { id: "99", paper: "NYT", date: "2026-11-17", title: "Body only hit", link: L(99), snippet: "mentions climate in the article body" },
+    { id: "40", paper: "WSJ", date: "2026-11-18", title: "Markets Rally", text: "THIS FULL TEXT MUST NOT BE COPIED" },
+  ], "All", LIB2);
+  eq(merged.map((i) => i.doc), ["40", "30", "99", "10"], "body-only hit merged in, sorted by date then id");
+  eq(merged.find((i) => i.doc === "30").snippet, "the chamber passed the climate bill after");
+  eq(merged.find((i) => i.doc === "40").title, "Markets Rally");
+  ok(merged.find((i) => i.doc === "40").snippet.includes("traders cited"));
+  ok(!merged.some((i) => i.text), "merge never copies a text field");
+  eq(mergeSearchHits(headlines, [
+    { id: "40", paper: "WSJ", date: "2026-11-18", title: "Markets Rally", snippet: "traders cited the climate bill as a reason" },
+    { id: "99", paper: "NYT", date: "2026-11-17", title: "Body only hit", link: L(99), snippet: "mentions climate in the article body" },
+  ], "NYT", LIB2).map((i) => i.doc), ["30", "99", "10"], "paper filter applies to merged hits");
+}
+
 // static page checks
 const app = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8");
@@ -99,5 +150,12 @@ for (const m of html.matchAll(/<a [^>]*>/g)) ok(/rel="noopener noreferrer"/.test
 ok(/Library \(sign in with card &amp; PIN\)/.test(html), "library sign-in note kept");
 ok(/id="older"/.test(html) && /\/feed\/\$\{encodeURIComponent\(res\.id\)\}\/\$\{month\}/.test(app), "Load older button fetches month shards");
 ok(/connect-src https:\/\/news-feeds-relay\.johnlichtenberg\.workers\.dev;/.test(html), "CSP limits fetches to the relay");
+
+
+ok(/id="q"/.test(html) && /type="search"/.test(html), "search box at the top of the page");
+ok(/\/search\?q=/.test(app), "page calls /search for body-text matches");
+ok(/el\("p", "snippet"/.test(app), "snippets are rendered with textContent");
+ok(!/TEXT_TOKEN|Authorization:/.test(app + html), "page has no ingest token");
+ok(!/localStorage|sessionStorage/.test(readFileSync(new URL("../docs/lib.js", import.meta.url), "utf8")), "lib stores nothing");
 
 console.log(`page tests: ${n} passed`);

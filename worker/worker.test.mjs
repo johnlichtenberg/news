@@ -5,6 +5,7 @@ import { parseProquest, proquestLink, proquestDate, proquestTs, plainText, decod
 import { isSpanishTitle, isSpanishSource } from "./lang.js";
 import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
+import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -161,9 +162,13 @@ const { default: worker, _test } = await import("./worker.js");
 const kvStore = new Map(); let kvPuts = 0;
 const KV = { async get(k, type) { const v = kvStore.get(k); return v == null ? null : type === "json" ? JSON.parse(v) : v; },
   async put(k, v) { kvPuts++; kvStore.set(k, v); } };
-const env = { ALLOWED_ORIGIN: ORIGIN, NEWS_HISTORY: KV };
-const req = (path, { origin = ORIGIN, method = "GET" } = {}) =>
-  new Request("https://news-feeds-relay.example.workers.dev" + path, { method, headers: origin ? { Origin: origin } : {} });
+const TOKEN = "test-ingest-token-not-for-production";
+const env = { ALLOWED_ORIGIN: ORIGIN, NEWS_HISTORY: KV, TEXT_TOKEN: TOKEN };
+const req = (path, { origin = ORIGIN, method = "GET", headers = {}, body } = {}) => {
+  const h = { ...headers };
+  if (origin) h.Origin = origin;
+  return new Request("https://news-feeds-relay.example.workers.dev" + path, { method, headers: h, body });
+};
 
 let r = await worker.fetch(req("/feeds"), env);
 eq(r.status, 200); eq(r.headers.get("Access-Control-Allow-Origin"), ORIGIN);
@@ -263,5 +268,94 @@ _test.memo.clear();
 upstream = (url) => new Response(NYT_XML, { status: 200 });
 r = await worker.fetch(req("/feed/nyt-proquest"), { ALLOWED_ORIGIN: ORIGIN }); j = await r.json();
 eq(j.ok, true); eq(j.items.length, 2);
+
+
+// --- private article text + /search (full text never appears in the response) ---
+eq(normalizeId("3414243596"), "3414243596"); eq(normalizeId("12"), ""); eq(normalizeId("abc"), "");
+eq(normalizeText("  <p>Hello   world</p>\n\n\n<script>x()</script> "), "Hello world", "markup and script stripped");
+ok(timingSafeEqual("abcd", "abcd")); ok(!timingSafeEqual("abcd", "abce")); ok(!timingSafeEqual("abcd", "abc")); ok(!timingSafeEqual("", ""));
+_test.rate.reset();
+eq(rateLimited("ip-a", 1).limited, false);
+for (let i = 0; i < SEARCH_LIMIT - 1; i++) rateLimited("ip-a", 1);
+eq(rateLimited("ip-a", 1).limited, true, "31st request in the window is limited");
+eq(rateLimited("ip-b", 1).limited, false, "a different client is not limited");
+eq(rateLimited("ip-a", 1 + 60_000).limited, false, "window reset");
+_test.rate.reset();
+
+const auth = (tok = TOKEN) => ({ Authorization: "Bearer " + tok });
+const postText = (body, hdrs = auth(), origin = null) =>
+  worker.fetch(req("/text", { method: "POST", origin, headers: hdrs, body: typeof body === "string" ? body : JSON.stringify(body) }), env);
+
+r = await postText({ id: "3414299999", text: "hello" }, {}); eq(r.status, 401, "POST /text needs a token");
+r = await postText({ id: "3414299999", text: "hello" }, auth("wrong-token")); eq(r.status, 401);
+r = await postText({ id: "3414299999", text: "hello" }, auth(), ORIGIN); eq(r.status, 200, "token works even with a browser Origin");
+r = await postText("not-json"); eq(r.status, 400);
+r = await postText({ id: "nope", text: "hello" }); eq(r.status, 400);
+r = await postText({ id: "3414299999", text: "   " }); eq(r.status, 400);
+r = await worker.fetch(req("/text", { method: "GET" }), env); eq(r.status, 405);
+
+const BODY = "PADSTART " + "lorem ".repeat(80) + "UNIQUE_MOSS_PHRASE grows on the test boulder only and nowhere else in this fixture " + "lorem ".repeat(80) + "PADEND";
+r = await postText({ id: "3414299999", text: BODY }, auth(), null);
+eq(r.status, 200); j = await r.json();
+eq(j.ok, true); eq(j.id, "3414299999"); ok(j.found, "headline looked up from history");
+ok(!JSON.stringify(j).includes("UNIQUE_MOSS_PHRASE"), "POST response has no article text");
+ok(kvStore.has(TEXT_KEY("3414299999")), "stored under text:<id>");
+ok([...kvStore.keys()].some((k) => k.startsWith("textm:")), "monthly text index written");
+const stored = JSON.parse(kvStore.get(TEXT_KEY("3414299999")));
+ok(stored.text.includes("UNIQUE_MOSS_PHRASE"));
+
+// body-text search: snippet only, never the full stored text
+r = await worker.fetch(req("/search?q=" + encodeURIComponent("UNIQUE_MOSS_PHRASE")), env);
+eq(r.status, 200); ok(/no-store/.test(r.headers.get("Cache-Control")));
+j = await r.json();
+eq(j.ok, true); eq(j.items.length, 1); eq(j.items[0].id, "3414299999");
+eq(j.items[0].title, "Brand New"); eq(j.items[0].paper, "NYT");
+ok(j.items[0].snippet.includes("UNIQUE_MOSS_PHRASE"));
+ok([...j.items[0].snippet].filter((c) => c !== "\u2026").length <= 200, "snippet cap");
+ok(!JSON.stringify(j).includes(BODY), "/search never returns the full text");
+ok(!j.items.some((i) => "text" in i), "no text field on hits");
+eq(Object.keys(j.items[0]).sort(), ["date", "id", "link", "paper", "snippet", "title"]);
+
+// headline-only search (no stored text needed)
+r = await worker.fetch(req("/search?q=Senate"), env); j = await r.json();
+ok(j.items.some((i) => i.title.includes("Senate")));
+ok(j.items.every((i) => !i.snippet), "headline-only hits have no body snippet");
+
+// quoted AND: moss phrase plus a word that is only in this body
+r = await worker.fetch(req("/search?q=" + encodeURIComponent('"UNIQUE_MOSS_PHRASE" boulder')), env);
+j = await r.json(); eq(j.items.map((i) => i.id), ["3414299999"]);
+r = await worker.fetch(req("/search?q=" + encodeURIComponent('"UNIQUE_MOSS_PHRASE" missingword')), env);
+j = await r.json(); eq(j.items, []);
+
+// short query rejected; missing origin rejected; rate limit
+r = await worker.fetch(req("/search?q=ab"), env); eq(r.status, 400);
+r = await worker.fetch(req("/search?q=Senate", { origin: "https://evil.example" }), env); eq(r.status, 403);
+r = await worker.fetch(req("/search?q=Senate", { origin: null }), env); eq(r.status, 403);
+_test.rate.reset();
+let limited = 0;
+for (let i = 0; i < SEARCH_LIMIT + 2; i++) {
+  r = await worker.fetch(req("/search?q=Senate", { headers: { "CF-Connecting-IP": "203.0.113.9" } }), env);
+  if (r.status === 429) limited++;
+}
+ok(limited >= 1, "excess /search requests are rate limited");
+eq(r.headers.get("Retry-After") != null, true);
+_test.rate.reset();
+
+// Español headlines are not searchable, even if text was stored under their id
+kvStore.set("hist:nyt-proquest:2026-01", JSON.stringify({ items: [
+  { paper: "NYT", title: "January story", date: "2026-01-05", link: LIB(5555), id: "5555", seen: 1 },
+  { paper: "NYT", title: "El gobierno de Milei enfrenta una nueva crisis", date: "2026-01-06", link: LIB(5556), id: "5556", seen: 1 },
+] }));
+r = await postText({ id: "5556", text: "ES_BODY_MARKER hidden spanish body" });
+eq(r.status, 200); j = await r.json(); eq(j.found, false, "Español headline is not used as metadata");
+r = await worker.fetch(req("/search?q=ES_BODY_MARKER"), env); j = await r.json();
+eq(j.items, [], "Español items never appear in /search");
+r = await worker.fetch(req("/search?q=January"), env); j = await r.json();
+ok(j.items.some((i) => i.id === "5555"));
+ok(!j.items.some((i) => i.id === "5556"));
+
+// POST /feeds is still rejected
+r = await worker.fetch(req("/feeds", { method: "POST" }), env); eq(r.status, 405);
+
 
 console.log(`worker tests: ${n} passed`);
