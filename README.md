@@ -11,9 +11,11 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   ProQuest's batch load times (both papers arrive in the same few-minute windows about every 80–90 minutes), not
   article publish times. The Worker reads pubDate as an ET day and keeps the timestamp internally as `ts`.
   Newest date first; within a date, by ProQuest docview id, highest first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
-- Each headline opens the exact article in ProQuest through the Arlington Public Library's EZproxy sign-in:
-  `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
-  John signs in himself (card + PIN); no credentials are stored anywhere.
+- Each headline (and each search-result headline) opens `GET /go?id=<docview id>` on the Worker. The Worker signs
+  into EZproxy with the `LIB_USER` / `LIB_PIN` secrets and redirects the browser to a short-lived `connect?session=`
+  ticket, so the library session cookie is set in the browser and the article opens already signed in. The PIN is
+  never on the page, in the repo, or in the `/go` response. If sign-in fails, `/go` falls back to the plain library
+  docview URL: `https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/<id>?accountid=57895`.
 - The feeds only hold ProQuest's newest batch, so the Worker keeps every headline it has ever seen (see below).
   The page loads this month and last month first; "Load older" adds earlier months one at a time.
 - NYT en Español items are never shown or stored. The ProQuest feed has no language, source or section field for

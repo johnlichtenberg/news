@@ -6,7 +6,7 @@ import { isSpanishTitle, isSpanishSource } from "./lang.js";
 import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
-import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey } from "./proquest.js";
+import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey, isAllowedConnect, originAllowed, docviewUrl, libraryLink as libLink, ezproxyConnectTicket } from "./proquest.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -475,6 +475,80 @@ eq(j.cached, true); eq(j.items.length, 2);
 eq(pqCalls.length, callsAfter, "cached query does not hit ProQuest again");
 globalThis.fetch = prevFetch;
 _test.live.lastLive.at = 0;
+
+
+
+// --- GET /go?id= : EZproxy connect ticket (PIN never in the response) ---
+{
+  const id = "3416786144";
+  const goodQurl = "https://www.proquest.com/docview/" + id + "?accountid=57895";
+  const goodLoc = "https://login.library.access.arlingtonva.us/connect?session=TICKET&qurl=" + encodeURIComponent(goodQurl);
+  ok(isAllowedConnect(goodLoc, id));
+  ok(isAllowedConnect(goodLoc.replace("https://www.proquest.com", "https://search.proquest.com"), id), "search.proquest.com also allowed");
+  ok(!isAllowedConnect(goodLoc, "999"), "qurl id must match");
+  ok(!isAllowedConnect("https://evil.example/connect?session=TICKET&qurl=" + encodeURIComponent(goodQurl), id), "host must be EZproxy");
+  ok(!isAllowedConnect("https://login.library.access.arlingtonva.us/connect?session=TICKET&qurl=" + encodeURIComponent("https://evil.example/docview/" + id), id));
+  ok(!isAllowedConnect("https://login.library.access.arlingtonva.us/login?url=" + encodeURIComponent(goodQurl), id), "only /connect");
+  ok(!isAllowedConnect("https://www-proquest-com.library.access.arlingtonva.us/docview/" + id + "?accountid=57895", id), "proxied docview is not a ticket");
+  ok(!isAllowedConnect("https://login.library.access.arlingtonva.us/connect?session=TICKET&qurl=" + encodeURIComponent("https://www.proquest.com.evil.example/docview/" + id), id));
+  eq(docviewUrl(id), "https://www.proquest.com/docview/" + id + "?accountid=57895");
+  ok(originAllowed(new Request("https://relay.example/go?id=1"), "https://johnlichtenberg.github.io"), "missing Origin/Referer allowed");
+  ok(originAllowed(new Request("https://relay.example/go?id=1", { headers: { Origin: "https://johnlichtenberg.github.io", Referer: "https://johnlichtenberg.github.io/news/" } }), "https://johnlichtenberg.github.io"));
+  ok(!originAllowed(new Request("https://relay.example/go?id=1", { headers: { Origin: "https://evil.example" } }), "https://johnlichtenberg.github.io"));
+  ok(!originAllowed(new Request("https://relay.example/go?id=1", { headers: { Referer: "https://evil.example/" } }), "https://johnlichtenberg.github.io"));
+}
+
+_test.rate.reset();
+r = await worker.fetch(req("/go"), env); eq(r.status, 400, "/go needs a numeric id");
+r = await worker.fetch(req("/go?id=abc"), env); eq(r.status, 400);
+r = await worker.fetch(req("/go?id=3416786144&url=https://evil.example/"), env); eq(r.status, 302, "extra params ignored; id still valid");
+eq(r.headers.get("Location"), LIB("3416786144"), "no secrets and no EZproxy login -> library fallback");
+ok(/no-store/.test(r.headers.get("Cache-Control")));
+eq(r.headers.get("Referrer-Policy"), "no-referrer");
+r = await worker.fetch(req("/go?id=3416786144", { origin: "https://evil.example" }), env); eq(r.status, 403);
+r = await worker.fetch(req("/go?id=3416786144", { origin: null, headers: { Referer: "https://evil.example/" } }), env); eq(r.status, 403);
+
+// mocked ticket: 302 to connect, body empty, PIN not in headers
+const prevFetchGo = globalThis.fetch;
+let goPosts = 0, lastGoBody = "";
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes("library.access.arlingtonva.us/login") && init && init.method === "POST") {
+    goPosts++;
+    lastGoBody = String(init.body || "");
+    const id = "3416786144";
+    const loc = "https://login.library.access.arlingtonva.us/connect?session=TESTSESSION&qurl=" + encodeURIComponent(docviewUrl(id));
+    return new Response(null, { status: 302, headers: { Location: loc } });
+  }
+  return prevFetchGo(url, init);
+};
+const goEnv = { ...env, LIB_USER: "john.lichtenberg", LIB_PIN: "not-the-real-pin" };
+_test.rate.reset();
+r = await worker.fetch(req("/go?id=3416786144", { origin: null }), goEnv); // Focus often sends no Origin
+eq(r.status, 302);
+eq(r.headers.get("Cache-Control").includes("no-store"), true);
+eq(r.headers.get("Referrer-Policy"), "no-referrer");
+const loc = r.headers.get("Location") || "";
+ok(loc.startsWith("https://login.library.access.arlingtonva.us/connect?"), "redirects to EZproxy connect ticket");
+ok(loc.includes("qurl=") && loc.includes("3416786144"), "ticket qurl is this docview id");
+eq(await r.text(), "", "empty body");
+ok(!(r.headers.get("Location") || "").includes("not-the-real-pin"), "PIN not in Location");
+ok(!lastGoBody.includes("LIB_PIN"));
+ok(/user=/.test(lastGoBody) && /pass=/.test(lastGoBody) && /url=/.test(lastGoBody), "login POST has user, pass, url");
+eq(goPosts, 1);
+
+// evil Location from EZproxy is not forwarded
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes("library.access.arlingtonva.us/login")) {
+    return new Response(null, { status: 302, headers: { Location: "https://evil.example/phish" } });
+  }
+  return prevFetchGo(url, init);
+};
+_test.rate.reset();
+r = await worker.fetch(req("/go?id=3416786144"), goEnv);
+eq(r.status, 302);
+eq(r.headers.get("Location"), LIB("3416786144"), "unsafe Location falls back to the library docview URL");
+globalThis.fetch = prevFetchGo;
+_test.rate.reset();
 
 
 console.log(`worker tests: ${n} passed`);

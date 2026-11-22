@@ -4,6 +4,12 @@ const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
 const LIB_PREFIX = "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/";
 const LIB_SUFFIX = "?accountid=57895";
 const libraryLink = (id) => LIB_PREFIX + id + LIB_SUFFIX;
+const goLink = (id) => RELAY + "/go?id=" + encodeURIComponent(id);
+// Prefer the Worker sign-in bounce; fall back to the plain library docview URL when the id is missing.
+const articleHref = (it) => {
+  const id = it && (it.doc || it.id);
+  return id && /^\d{3,15}$/.test(id) ? goLink(id) : (it && it.link) || libraryLink(id || "");
+};
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -68,7 +74,8 @@ function card(it, now) {
   if (it.date) { const t = el("time", "when", dayLabel(it.date, now)); t.dateTime = it.date; meta.append(t); }
   const h = el("h2");
   const link = el("a", null, it.title);
-  link.href = it.link; link.target = "_blank"; link.rel = "noopener noreferrer";
+  link.href = articleHref(it); link.target = "_blank"; link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
   link.title = "Open in ProQuest (Arlington library sign-in)";
   h.append(link);
   a.append(meta, h);

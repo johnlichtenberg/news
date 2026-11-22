@@ -4,11 +4,12 @@
 // GET /search signs into ProQuest through EZproxy (LIB_USER / LIB_PIN secrets) and returns headline + snippet
 // matches. Full article text is never stored or returned. If live search fails, it falls back to stored headlines.
 // POST /text (bearer token) can still write private text:<docviewId> for the older stored-text path.
+// GET /go?id=<docviewId> signs in via EZproxy and 302s the browser to a connect ticket (PIN never in the page).
 import { FEEDS } from "./feeds.js";
 import { parseProquest, keepItem } from "./parse.js";
 import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth } from "./history.js";
 import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
-import { liveSearch, _live } from "./proquest.js";
+import { liveSearch, _live, ezproxyConnectTicket, originAllowed, libraryLink as libraryGoFallback } from "./proquest.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -53,6 +54,38 @@ async function handleSearch(request, url, env, h) {
   const items = env.NEWS_HISTORY ? await runSearch(env.NEWS_HISTORY, q) : [];
   const notice = (live && live.notice) || "Full-text search is unavailable; showing headlines.";
   return json({ ok: true, q, items, source: "headlines", notice }, 200, h, 0);
+}
+
+
+function noStoreRedirect(to, headers = {}) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: to,
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      Pragma: "no-cache",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      ...headers,
+    },
+  });
+}
+
+async function handleGo(request, url, env, h) {
+  const allowed = env.ALLOWED_ORIGIN || "https://johnlichtenberg.github.io";
+  if (!originAllowed(request, allowed)) return json({ error: "forbidden" }, 403, h, 0);
+  const id = normalizeId(url.searchParams.get("id"));
+  if (!id) return json({ error: "invalid id" }, 400, h, 0);
+  const fallback = libraryGoFallback(id);
+  const rl = rateLimited("go:" + clientKey(request));
+  if (rl.limited) return noStoreRedirect(fallback, { "Retry-After": String(rl.retryAfter) });
+  const user = env.LIB_USER, pin = env.LIB_PIN;
+  if (!user || !pin) return noStoreRedirect(fallback);
+  try {
+    const ticket = await ezproxyConnectTicket(user, pin, id);
+    if (ticket.ok && ticket.url) return noStoreRedirect(ticket.url);
+  } catch { /* fall through */ }
+  return noStoreRedirect(fallback);
 }
 
 async function handlePostText(request, env, h) {
@@ -126,6 +159,8 @@ export default {
     }
     // Server-to-server ingest: bearer token, no browser Origin required. Never from the public page.
     if (url.pathname === "/text" && request.method === "POST") return handlePostText(request, env, h);
+    // Top-level navigation from the News page. Origin/Referer are checked when present (Focus often sends none).
+    if (url.pathname === "/go" && request.method === "GET") return handleGo(request, url, env, h);
     if (request.method !== "GET") return json({ error: "method not allowed" }, 405, h);
     if (!ok) return json({ error: "forbidden" }, 403, h);
 

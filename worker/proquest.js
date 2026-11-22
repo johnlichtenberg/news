@@ -28,6 +28,42 @@ export const SITES = [
 export const libraryLink = (id) =>
   `${LIBRARY_LOGIN}https://www.proquest.com/docview/${id}?accountid=${PROQUEST_ACCOUNT}`;
 
+// The exact ProQuest docview URL we allow EZproxy to send the browser to (never an open redirect).
+export const docviewUrl = (id) =>
+  `https://www.proquest.com/docview/${id}?accountid=${PROQUEST_ACCOUNT}`;
+
+const CONNECT_HOSTS = new Set(["login.library.access.arlingtonva.us", "library.access.arlingtonva.us"]);
+
+// A connect?session= Location is safe only if it is on the library EZproxy host and its qurl/url
+// is the ProQuest docview page for this same numeric id.
+export function isAllowedConnect(location, id) {
+  let u;
+  try { u = new URL(String(location || "")); } catch { return false; }
+  if (!CONNECT_HOSTS.has(u.hostname.toLowerCase())) return false;
+  if (u.pathname !== "/connect") return false;
+  if (u.username || u.password) return false;
+  const raw = u.searchParams.get("qurl") || u.searchParams.get("url") || "";
+  let target;
+  try { target = new URL(raw); } catch { return false; }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return false;
+  if (target.username || target.password) return false;
+  if (!/^(www|search)\.proquest\.com$/i.test(target.hostname)) return false;
+  const m = target.pathname.match(/^\/(?:[a-z0-9]+\/)?docview\/(\d{3,15})(?:\/|$)/i);
+  return !!(m && m[1] === String(id));
+}
+
+export function originAllowed(request, allowedOrigin) {
+  const allowed = new URL(allowedOrigin || "https://johnlichtenberg.github.io");
+  for (const name of ["Origin", "Referer"]) {
+    const v = request.headers.get(name);
+    if (!v) continue;
+    let u;
+    try { u = new URL(v); } catch { return false; }
+    if (u.protocol !== allowed.protocol || u.hostname !== allowed.hostname) return false;
+  }
+  return true;
+}
+
 const etDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
 
 export function cacheKey(q) {
@@ -267,6 +303,22 @@ export async function ezproxyLogin(user, pin) {
   if (looksLikeChallenge(hop.text)) return { ok: false, error: "challenge", challenge: true, jar };
   if (looksLikeLogin(hop.text)) return { ok: false, error: "login rejected", jar };
   return { ok: true, jar };
+}
+
+// Fresh EZproxy login (no reused cookies) so the 302 is a connect?session= ticket the *browser*
+// can redeem. The PIN never appears in the response. Only the validated Location is returned.
+export async function ezproxyConnectTicket(user, pin, id) {
+  if (!user || !pin || !id) return { ok: false, error: "missing" };
+  const body = new URLSearchParams({ user, pass: pin, url: docviewUrl(id) }).toString();
+  const res = await fetch(EZPROXY + "/login", {
+    method: "POST",
+    headers: { "User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body,
+    redirect: "manual",
+  });
+  const loc = res.headers.get("Location") || "";
+  if (res.status >= 300 && res.status < 400 && isAllowedConnect(loc, id)) return { ok: true, url: loc };
+  return { ok: false, error: "login failed" };
 }
 
 export async function searchSite(jar, site, query) {
