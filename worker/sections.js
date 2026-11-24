@@ -610,11 +610,11 @@ async function loadCatalogFresh(env, now, mo) {
   for (const paper of ["NYT", "WSJ"]) {
     const news = NEWS_SITEMAPS[paper];
     const monthUrl = catalogMonthUrl(paper, mo);
+    // Official section RSS is fetched by the backfill script, not here: a /feed
+    // refresh must stay under the Cloudflare free-plan subrequest limit (redirects
+    // on those feeds can push a parallel sitemap+RSS fetch over 50).
     if (news) jobs.push(fetchText(news).then((xml) => { entries[paper].push(...parseUrlset(xml, paper)); }).catch(() => {}));
     if (monthUrl) jobs.push(fetchText(monthUrl).then((xml) => { entries[paper].push(...parseUrlset(xml, paper)); }).catch(() => {}));
-    for (const url of (OFFICIAL_RSS[paper] || [])) {
-      jobs.push(fetchText(url).then((xml) => { entries[paper].push(...parseRssEntries(xml, paper)); }).catch(() => {}));
-    }
   }
   await Promise.all(jobs);
   const catalog = { month: mo, updated: new Date(now).toISOString(), entries };
