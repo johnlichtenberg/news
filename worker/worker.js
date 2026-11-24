@@ -10,7 +10,7 @@ import { parseProquest, keepItem } from "./parse.js";
 import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth, changed } from "./history.js";
 import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, loadHeadlines, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
 import { liveSearch, _live, ezproxyConnectTicket, originAllowed, libraryLink as libraryGoFallback } from "./proquest.js";
-import { loadCatalog, applyCatalog, isLegacySection } from "./sections.js";
+import { loadCatalog, applyCatalog } from "./sections.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -162,16 +162,10 @@ export async function refreshFeed(feed, env, now = Date.now(), { force = false }
   try {
     st = await storeBatch(kv, feed.id, fresh, now, keepItem(feed));
     stats.writes += st.writes;
-    if (kv && catalog && catalog.ok && st.current &&
-        st.current.some((it) => it && (!it.section || isLegacySection(it.section, it.paper)))) {
-      const filled = applyCatalog(st.current, catalog);
-      if (changed(st.current, filled)) {
-        await kv.put("hist:" + feed.id + ":" + st.month, JSON.stringify({ updated: new Date(now).toISOString(), items: filled }));
-        st.current = filled;
-        st.writes = (st.writes || 0) + 1;
-        stats.writes++;
-      }
-    }
+    // Do not rematch the whole stored month here. Slug-scoring hundreds of
+    // unmatched headlines against the monthly sitemap catalog exceeds the
+    // free-plan CPU limit on the NYT feed. History is classified by backfill
+    // and by applyCatalog on the live batch when each item first arrives.
   } catch (e) {
     error = error || "history write failed";
     st = { months: [], month: monthOf(now), current: fresh || [], previous: [], failed: true };
