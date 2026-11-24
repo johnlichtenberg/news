@@ -661,10 +661,18 @@ export function migrateSection(section, paper) {
   return (LEGACY_RENAME[paper] || {})[section] || section;
 }
 
+export function isLegacySection(section, paper) {
+  if (!section) return false;
+  return Object.prototype.hasOwnProperty.call(LEGACY_RENAME[paper] || {}, section);
+}
+
 export function applyCatalog(items, catalogs) {
   if (!items || !items.length) return items || [];
   return items.map((it) => {
     if (!it) return it;
+    // Skip items that already have an official (non-legacy) label so a /feed
+    // refresh does not rematch every stored headline against the full catalog.
+    if (it.section && !isLegacySection(it.section, it.paper)) return it;
     const section = matchWithCatalog(it, catalogs);
     if (section) return it.section === section ? it : { ...it, section };
     const migrated = migrateSection(it.section, it.paper);

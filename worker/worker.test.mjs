@@ -7,7 +7,7 @@ import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
 import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey, isAllowedConnect, originAllowed, docviewUrl, libraryLink as libLink, ezproxyConnectTicket } from "./proquest.js";
-import { sectionFromUrl, tabFor, titleVariants, prefixSection, bylineSection, parseUrlset, parseRssEntries, matchHeadline, buildIndex, applyCatalog, migrateSection, indexFromEntries, catalogMonthUrl, NEWS_SITEMAPS, _catalog, assignSection } from "./sections.js";
+import { sectionFromUrl, tabFor, titleVariants, prefixSection, bylineSection, parseUrlset, parseRssEntries, matchHeadline, buildIndex, applyCatalog, migrateSection, isLegacySection, indexFromEntries, catalogMonthUrl, NEWS_SITEMAPS, _catalog, assignSection } from "./sections.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -649,9 +649,15 @@ _test.rate.reset();
     { paper: "NYT", title: "A leftover U.S. item with no catalog hit", date: "2026-11-23", section: "U.S." },
     { paper: "WSJ", title: "Gold leftover", date: "2026-11-23", section: "Markets" },
   ], cat);
+  eq(isLegacySection("Tech", "NYT"), true);
+  eq(isLegacySection("Technology", "NYT"), false);
   eq(rematch[0].section, "Technology", "official URL match overwrites the old shared Tech label");
   eq(rematch[1].section, "U.S.", "unmatched ambiguous label is kept");
   eq(rematch[2].section, "Markets & Finance", "unambiguous Markets rename when no URL match");
+  const keptOfficial = applyCatalog([
+    { paper: "NYT", title: "OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say", date: "2026-11-23", section: "Arts" },
+  ], cat);
+  eq(keptOfficial[0].section, "Arts", "already-official labels are not rematched on every refresh");
 
   // mergeShard keeps and fills section; change detection includes it
   const withSec = mergeShard([], [{ ...it(200, "2026-11-18"), section: "Tech" }], [], T);
