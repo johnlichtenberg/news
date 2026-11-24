@@ -1,17 +1,20 @@
-// Map NYT and WSJ articles to a shared set of section tabs, using the papers' own
-// assignment: the section segment in the official URL (and, when a title is known,
-// public news sitemaps / RSS). ProQuest feeds have no section field and their
-// links are docview URLs, so headlines are matched to those public URLs.
-// Publisher URLs are never added to the public page or API items.
+// Map NYT and WSJ articles to each paper's own section tabs, using the papers'
+// official assignment: the section segment in the official URL (and, when a
+// title is known, public news sitemaps / official section RSS). ProQuest feeds
+// have no section field and their links are docview URLs, so headlines are
+// matched to those public URLs. Publisher URLs are never added to the public
+// page or API items. Stored labels from the earlier shared vocabulary are
+// remapped to official names when a URL match (or an unambiguous rename) exists.
 
 const ET_DAY = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
 });
 
 export const SECTION_ORDER = [
-  "World", "U.S.", "Politics", "Business", "Tech", "Science", "Health", "Opinion",
-  "Arts", "Books", "Sports", "Style", "Food", "Travel", "Real Estate", "Markets",
-  "Life & Arts", "Other",
+  "U.S.", "Politics", "New York", "World", "Business", "Economy", "Technology",
+  "Tech", "Markets & Finance", "Personal Finance", "Arts", "Books", "Lifestyle",
+  "Style", "Food", "Travel", "Magazine", "Opinion", "Science", "Climate", "Health",
+  "Well", "Sports", "The Athletic", "Real Estate", "Games", "Other",
 ];
 
 export const sectionRank = (s) => {
@@ -20,25 +23,26 @@ export const sectionRank = (s) => {
 };
 
 // NYT path segment after /yyyy/mm/dd/ (or the effective section, e.g. us/politics -> politics).
+// Labels are the paper's own section names, not a shared vocabulary.
 const NYT_MAP = {
   world: "World",
   us: "U.S.",
-  nyregion: "U.S.",
+  nyregion: "New York",
   education: "U.S.",
   politics: "Politics",
   elections: "Politics",
   business: "Business",
   economy: "Business",
   dealbook: "Business",
-  technology: "Tech",
-  personaltech: "Tech",
+  technology: "Technology",
+  personaltech: "Technology",
   science: "Science",
-  climate: "Science",
+  climate: "Climate",
   space: "Science",
-  weather: "Science",
+  weather: "Climate",
   energyenvironment: "Science",
   health: "Health",
-  well: "Health",
+  well: "Well",
   opinion: "Opinion",
   "sunday-review": "Opinion",
   arts: "Arts",
@@ -49,29 +53,33 @@ const NYT_MAP = {
   television: "Arts",
   artanddesign: "Arts",
   books: "Books",
-  sports: "Sports",
-  athletic: "Sports",
+  sports: "The Athletic",
+  athletic: "The Athletic",
   style: "Style",
   fashion: "Style",
-  "t-magazine": "Style",
-  tmagazine: "Style",
+  "t-magazine": "Magazine",
+  tmagazine: "Magazine",
+  magazine: "Magazine",
   dining: "Food",
   food: "Food",
   cooking: "Food",
   travel: "Travel",
   realestate: "Real Estate",
-  "your-money": "Markets",
-  yourmoney: "Markets",
+  "your-money": "Business",
+  yourmoney: "Business",
+  crosswords: "Games",
+  games: "Games",
+  quiz: "Games",
 };
 
-// WSJ first path segment (wsj.com/<section>/...).
+// WSJ first path segment (wsj.com/<section>/...). Labels match the live top nav.
 const WSJ_MAP = {
   world: "World",
   "us-news": "U.S.",
   us: "U.S.",
   politics: "Politics",
   business: "Business",
-  economy: "Business",
+  economy: "Economy",
   pro: "Business",
   "cio-journal": "Business",
   "cfo-journal": "Business",
@@ -87,55 +95,89 @@ const WSJ_MAP = {
   arts: "Arts",
   sports: "Sports",
   style: "Style",
-  lifestyle: "Life & Arts",
-  "life-arts": "Life & Arts",
-  food: "Food",
-  travel: "Travel",
+  lifestyle: "Lifestyle",
+  "life-arts": "Lifestyle",
+  food: "Lifestyle",
+  travel: "Lifestyle",
   "real-estate": "Real Estate",
-  finance: "Markets",
-  markets: "Markets",
-  "personal-finance": "Markets",
+  finance: "Markets & Finance",
+  markets: "Markets & Finance",
+  "personal-finance": "Personal Finance",
+  "market-data": "Markets & Finance",
 };
 
 // Newsletter / desk prefixes the papers put on some ProQuest headlines.
 // Used only when no official URL is found. "Breaking news:" is stripped, not assigned.
-const PREFIX_RE = /^(breaking news|the world|the morning|the evening|the gift|n\.?y\.? today|today'?s headlines|quote of the day|the daily|the local|from the front page|dealbook|on tech|opinion today|the opinions|the book review|science times|climate(?: forward)?|the fashions|travel dispatch|where to eat|watching|watch|shows|extra credit|word of the day|15-minute lesson plan|gameplay|upshot|corrections|opinion|daily briefing)\s*:\s*/i;
+const PREFIX_RE = /^(breaking news|the world|the morning|the evening|the gift|n\.?y\.? today|today'?s headlines|quote of the day|the daily|the local|from the front page|dealbook|on tech|opinion today|the opinions|the book review|science times|climate(?: forward| alert)?|the fashions|the good list|travel dispatch|where to eat|the veggie|watching|watch live|watch|shows|movies update|theater update|extra credit|word of the day|15-minute lesson plan|gameplay|special gameplay|upshot|corrections|opinion|daily briefing|well|your money|the t list|canada letter|the ethicist|learning network|ask the morning|on politics|politics)\s*:\s*/i;
 
+// After prefixKey() (punctuation stripped): "n.y. today" -> "ny today".
 const PREFIX_SECTION = {
   dealbook: "Business",
-  "on tech": "Tech",
+  "on tech": "Technology",
+  "your money": "Business",
   "opinion today": "Opinion",
   "the opinions": "Opinion",
   opinion: "Opinion",
   "the book review": "Books",
   "science times": "Science",
-  climate: "Science",
-  "climate forward": "Science",
+  climate: "Climate",
+  "climate forward": "Climate",
+  "climate alert": "Climate",
   "the fashions": "Style",
   "the gift": "Style",
+  "the good list": "Style",
+  "beauty school": "Style",
   "travel dispatch": "Travel",
   "where to eat": "Food",
+  "the veggie": "Food",
   watching: "Arts",
+  "watch live": "Arts",
   watch: "Arts",
   shows: "Arts",
-  "n.y. today": "U.S.",
-  "ny today": "U.S.",
-  "the local": "U.S.",
+  "movies update": "Arts",
+  "theater update": "Arts",
+  "ny today": "New York",
+  "the local": "New York",
+  well: "Well",
+  "the t list": "Magazine",
+  "the ethicist": "Magazine",
+  "canada letter": "World",
+  "on politics": "Politics",
+  politics: "Politics",
+  gameplay: "Games",
+  "special gameplay": "Games",
   "the morning": "Other",
   "the evening": "Other",
   "the world": "Other",
   "todays headlines": "Other",
-  "today's headlines": "Other",
   "quote of the day": "Other",
   "from the front page": "Other",
   "extra credit": "Other",
   "word of the day": "Other",
   "15-minute lesson plan": "Other",
-  gameplay: "Other",
+  "learning network": "Other",
   corrections: "Other",
   upshot: "Other",
   "daily briefing": "Other",
+  "ask the morning": "Other",
 };
+
+// Official NYT Opinion columnists listed on the Times RSS/Opinion page.
+// A ProQuest headline ending ": Michelle Goldberg" is that column, not a guessed topic.
+const OPINION_BYLINES = new Set([
+  "Charles M. Blow", "Jamelle Bouie", "David Brooks", "Frank Bruni", "Gail Collins",
+  "Ross Douthat", "Maureen Dowd", "Thomas L. Friedman", "Michelle Goldberg", "Ezra Klein",
+  "Nicholas D. Kristof", "Paul Krugman", "Farhad Manjoo", "Bret Stephens", "The Editorial Board",
+]);
+
+export function bylineSection(title, paper) {
+  if (paper && paper !== "NYT") return "";
+  const m = /:\s*([^:]+)$/.exec(String(title || "").trim());
+  if (!m) return "";
+  const name = m[1].replace(/\s+/g, " ").trim();
+  if (/^letters$/i.test(name)) return "Opinion";
+  return OPINION_BYLINES.has(name) ? "Opinion" : "";
+}
 
 const STOP = new Set(("a an the of and to in for on with at by from as is are was were be or but this that it its " +
   "his her their up out over into about not").split(" "));
@@ -151,6 +193,8 @@ export function normTitle(s) {
   t = t.replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
   t = t.replace(/[\u2013\u2014]/g, "-").replace(/\u00a0/g, " ");
   t = t.replace(/&/g, " and ").toLowerCase();
+  // U.S., A.I., D.N.C., N.Y. -> us, ai, dnc, ny so they match slugs.
+  t = t.replace(/\b(?:[a-z]\.)+[a-z]\.?/g, (m) => m.replace(/\./g, ""));
   t = t.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   return t;
 }
@@ -186,13 +230,18 @@ export function titleVariants(title) {
   add(title);
   const stripped = String(title || "").replace(PREFIX_RE, "").trim();
   add(stripped);
+  if (stripped.includes("; ")) add(stripped.slice(0, stripped.indexOf("; ")).trim());
   if (stripped.includes(":")) {
     const i = stripped.lastIndexOf(":");
     const left = stripped.slice(0, i).trim(), right = stripped.slice(i + 1).trim();
     if (right && right.split(/\s+/).length <= 4 && /^[A-Z]/.test(right)) add(left);
   }
   const parts = stripped.split(/(?<=[.!?])\s+/);
-  if (parts.length > 1 && parts[0].split(/\s+/).length >= 5) add(parts[0].replace(/[.!?]$/, ""));
+  if (parts.length > 1 && parts[0].split(/\s+/).length >= 4) add(parts[0].replace(/[.!?]$/, ""));
+  if (parts.length > 2) {
+    const two = (parts[0] + " " + parts[1]).replace(/[.!?]$/, "");
+    if (two.split(/\s+/).length >= 6) add(two);
+  }
   add(stripped.replace(/:\s*(News Analysis|Review|Opinion|Editorial|Comment|Late Night ROUNDUP)\s*$/i, "").trim());
   return out;
 }
@@ -330,6 +379,52 @@ export const NEWS_SITEMAPS = {
   WSJ: "https://www.wsj.com/wsjsitemaps/wsj_google_news.xml",
 };
 
+// Official section RSS used by the Worker catalog (kept modest so one /feed
+// refresh stays under the Cloudflare free-plan subrequest limit of 50).
+// The backfill script can fetch a larger set from the box.
+export const OFFICIAL_RSS = {
+  NYT: [
+    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/NYRegion.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Climate.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Well.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Opinion.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Books.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/FashionandStyle.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Travel.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/RealEstate.xml",
+  ],
+  WSJ: [
+    "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
+    "https://feeds.content.dowjones.io/public/rss/RSSUSnews",
+    "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed",
+    "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness",
+    "https://feeds.content.dowjones.io/public/rss/socialeconomyfeed",
+    "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
+    "https://feeds.content.dowjones.io/public/rss/RSSWSJD",
+    "https://feeds.content.dowjones.io/public/rss/RSSOpinion",
+    "https://feeds.content.dowjones.io/public/rss/RSSArtsCulture",
+    "https://feeds.content.dowjones.io/public/rss/RSSLifestyle",
+    "https://feeds.content.dowjones.io/public/rss/latestnewsrealestate",
+    "https://feeds.content.dowjones.io/public/rss/RSSPersonalFinance",
+    "https://feeds.content.dowjones.io/public/rss/socialhealth",
+    "https://feeds.content.dowjones.io/public/rss/rsssportsfeed",
+  ],
+};
+
+
+
 // ---- matching --------------------------------------------------------------
 
 function dayNum(d) {
@@ -436,7 +531,7 @@ export function assignSection(item, index) {
   const paper = item.paper || "";
   const found = index ? matchHeadline(item.title, item.date || "", paper, index) : null;
   if (found && found.section) return found.section;
-  return prefixSection(item.title) || "";
+  return prefixSection(item.title) || bylineSection(item.title, item.paper) || "";
 }
 
 // Fill missing section on a list. Does not overwrite an already stored section.
@@ -479,11 +574,10 @@ export function indexFromEntries(nytEntries, wsjEntries) {
 
 export function matchWithCatalog(item, catalogs) {
   if (!item) return "";
-  if (item.section) return item.section;
   const idx = catalogs && catalogs[item.paper];
   const found = idx ? matchHeadline(item.title, item.date || "", item.paper, idx) : null;
   if (found && found.section) return found.section;
-  return prefixSection(item.title) || "";
+  return prefixSection(item.title) || bylineSection(item.title, item.paper) || "";
 }
 
 export const _catalog = { memo: null, inflight: null, reset() { this.memo = null; this.inflight = null; } };
@@ -518,6 +612,9 @@ async function loadCatalogFresh(env, now, mo) {
     const monthUrl = catalogMonthUrl(paper, mo);
     if (news) jobs.push(fetchText(news).then((xml) => { entries[paper].push(...parseUrlset(xml, paper)); }).catch(() => {}));
     if (monthUrl) jobs.push(fetchText(monthUrl).then((xml) => { entries[paper].push(...parseUrlset(xml, paper)); }).catch(() => {}));
+    for (const url of (OFFICIAL_RSS[paper] || [])) {
+      jobs.push(fetchText(url).then((xml) => { entries[paper].push(...parseRssEntries(xml, paper)); }).catch(() => {}));
+    }
   }
   await Promise.all(jobs);
   const catalog = { month: mo, updated: new Date(now).toISOString(), entries };
@@ -550,12 +647,29 @@ function thawCatalog(cached) {
   };
 }
 
+// Unambiguous renames from the first shared-tab vocabulary to official names.
+// Ambiguous leftovers (NYT "U.S." may be U.S. or New York; "Science" may be
+// Science or Climate; WSJ "Business" may be Business or Economy) are left
+// until an official URL match overwrites them.
+const LEGACY_RENAME = {
+  NYT: { Tech: "Technology", Sports: "The Athletic", "Life & Arts": "Lifestyle", Markets: "Markets & Finance" },
+  WSJ: { Markets: "Markets & Finance", "Life & Arts": "Lifestyle", Technology: "Tech" },
+};
+
+export function migrateSection(section, paper) {
+  if (!section) return "";
+  return (LEGACY_RENAME[paper] || {})[section] || section;
+}
+
 export function applyCatalog(items, catalogs) {
   if (!items || !items.length) return items || [];
   return items.map((it) => {
-    if (!it || it.section) return it;
+    if (!it) return it;
     const section = matchWithCatalog(it, catalogs);
-    return section ? { ...it, section } : it;
+    if (section) return it.section === section ? it : { ...it, section };
+    const migrated = migrateSection(it.section, it.paper);
+    if (migrated && migrated !== it.section) return { ...it, section: migrated };
+    return it;
   });
 }
 

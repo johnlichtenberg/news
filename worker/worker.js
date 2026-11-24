@@ -162,7 +162,9 @@ export async function refreshFeed(feed, env, now = Date.now(), { force = false }
   try {
     st = await storeBatch(kv, feed.id, fresh, now, keepItem(feed));
     stats.writes += st.writes;
-    if (kv && catalog && catalog.ok && st.current && st.current.some((it) => it && !it.section)) {
+    // Re-apply official URL matches (and unambiguous label migrations) even when
+    // items already have a section, so older shared-vocabulary labels get updated.
+    if (kv && catalog && catalog.ok && st.current) {
       const filled = applyCatalog(st.current, catalog);
       if (changed(st.current, filled)) {
         await kv.put("hist:" + feed.id + ":" + st.month, JSON.stringify({ updated: new Date(now).toISOString(), items: filled }));

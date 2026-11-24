@@ -1,4 +1,4 @@
-import { combineFeeds, filterItems, filterByQuery, mergeSearchHits, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel, sectionsFor, SECTION_ORDER } from "./lib.js";
+import { combineFeeds, filterItems, filterByQuery, mergeSearchHits, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel, sectionsFor, isKnownSection, resolveSection, canonicalSection } from "./lib.js";
 
 const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
 const LIB_PREFIX = "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/";
@@ -63,7 +63,7 @@ function readHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   const p = h.get("paper"), s = h.get("section");
   state.paper = p === "NYT" || p === "WSJ" ? p : "All";
-  state.section = s && SECTION_ORDER.includes(s) ? s : "All";
+  state.section = s && isKnownSection(s) ? (canonicalSection(s, state.paper) || "All") : "All";
 }
 function writeHash() {
   const h = new URLSearchParams();
@@ -240,7 +240,10 @@ function init() {
   readHash();
   $("#papers").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-paper]"); if (!b) return;
-    state.paper = b.dataset.paper; writeHash(); render(); scrollTo(0, 0);
+    const next = b.dataset.paper;
+    state.section = resolveSection(state.section, state.paper, next);
+    state.paper = next;
+    writeHash(); render(); scrollTo(0, 0);
   });
   $("#sections").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-section]"); if (!b) return;

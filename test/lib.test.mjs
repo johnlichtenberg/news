@@ -1,7 +1,7 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { combineFeeds, filterItems, sectionsFor, SECTION_ORDER, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel, parseQuery, queryMatches, filterByQuery, snippetAround, mergeSearchHits } from "../docs/lib.js";
+import { combineFeeds, filterItems, sectionsFor, SECTION_ORDER, NYT_SECTIONS, WSJ_SECTIONS, MERGED_SECTIONS, resolveSection, canonicalSection, sectionMatches, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel, parseQuery, queryMatches, filterByQuery, snippetAround, mergeSearchHits } from "../docs/lib.js";
 import { parseProquest } from "../worker/parse.js";
 import { FEEDS } from "../worker/feeds.js";
 
@@ -167,35 +167,56 @@ ok(/referrerPolicy = "no-referrer"/.test(app), "article links send no referrer")
 ok(!/localStorage|sessionStorage/.test(readFileSync(new URL("../docs/lib.js", import.meta.url), "utf8")), "lib stores nothing");
 
 
+
 // --- sections ---
 {
-  eq(SECTION_ORDER[0], "World");
+  eq(NYT_SECTIONS[0], "U.S.");
+  eq(WSJ_SECTIONS[0], "World");
+  eq(WSJ_SECTIONS.includes("Markets & Finance"), true);
+  eq(NYT_SECTIONS.includes("Technology"), true);
+  eq(NYT_SECTIONS.includes("The Athletic"), true);
   eq(SECTION_ORDER.includes("Other"), true);
+  eq(canonicalSection("Tech", "NYT"), "Technology");
+  eq(canonicalSection("Technology", "WSJ"), "Tech");
+  eq(canonicalSection("The Athletic", "All"), "Sports");
+  eq(resolveSection("Tech", "WSJ", "NYT"), "Technology");
+  eq(resolveSection("Technology", "NYT", "WSJ"), "Tech");
+  eq(resolveSection("New York", "NYT", "WSJ"), "All");
+  eq(resolveSection("Politics", "NYT", "WSJ"), "Politics");
+  eq(resolveSection("All", "NYT", "WSJ"), "All");
   const listed = combineFeeds([
     { paper: "NYT", items: [
       { title: "A", date: "2026-11-23", link: L(30), section: "Politics" },
       { title: "B", date: "2026-11-23", link: L(20), section: "Business" },
       { title: "C", date: "2026-11-22", link: L(10) },
+      { title: "N", date: "2026-11-23", link: L(18), section: "New York" },
     ]},
     { paper: "WSJ", items: [
       { title: "D", date: "2026-11-23", link: L(25), section: "Business" },
-      { title: "E", date: "2026-11-23", link: L(15), section: "Markets" },
+      { title: "E", date: "2026-11-23", link: L(15), section: "Markets & Finance" },
+      { title: "F", date: "2026-11-23", link: L(14), section: "Tech" },
     ]},
   ]);
-  eq(listed.map((i) => i.section || ""), ["Politics", "Business", "Business", "Markets", ""]);
+  eq(listed.map((i) => i.section || ""), ["Politics", "Business", "Business", "New York", "Markets & Finance", "Tech", ""]);
   eq(filterItems(listed, "All", "Business").map((i) => i.doc), ["25", "20"]);
   eq(filterItems(listed, "NYT", "Business").map((i) => i.doc), ["20"]);
   eq(filterItems(listed, "NYT", "Politics").map((i) => i.doc), ["30"]);
+  // NYT U.S. rolls up Politics and New York; All does not.
+  eq(filterItems(listed, "NYT", "U.S.").map((i) => i.doc), ["30", "18"]);
+  eq(filterItems(listed, "All", "U.S."), [], "All view does not roll Politics into U.S.");
+  eq(filterItems(listed, "All", "Technology").map((i) => i.doc), ["14"], "All Technology includes WSJ Tech");
+  eq(filterItems(listed, "WSJ", "Tech").map((i) => i.doc), ["14"]);
   eq(filterItems(listed, "All", "World"), [], "empty section hidden by sectionsFor, and filters to none");
-  eq(filterItems(listed, "WSJ", "All").map((i) => i.doc), ["25", "15"]);
-  eq(filterItems(listed, "All", "Business").every((i) => i.section === "Business"), true);
-  // items with no section only appear under All
+  eq(filterItems(listed, "WSJ", "All").map((i) => i.doc), ["25", "15", "14"]);
   eq(filterItems(listed, "All", "All").map((i) => i.doc).includes("10"), true);
   eq(filterItems(listed, "All", "Politics").map((i) => i.doc).includes("10"), false);
-  eq(sectionsFor(listed, "All"), ["Politics", "Business", "Markets"]);
-  eq(sectionsFor(listed, "NYT"), ["Politics", "Business"]);
-  eq(sectionsFor(listed, "WSJ"), ["Business", "Markets"]);
+  eq(sectionsFor(listed, "All"), ["Politics", "New York", "Business", "Technology", "Markets & Finance"]);
+  eq(sectionsFor(listed, "NYT"), ["U.S.", "Politics", "New York", "Business"]);
+  eq(sectionsFor(listed, "WSJ"), ["Business", "Tech", "Markets & Finance"]);
   eq(sectionsFor([], "All"), []);
+  ok(sectionMatches("Tech", "Technology", "All"));
+  ok(!sectionMatches("Politics", "U.S.", "All"));
+  ok(sectionMatches("Politics", "U.S.", "NYT"));
   const merged = mergeSearchHits(filterItems(listed, "All", "Business"), [
     { id: "20", paper: "NYT", date: "2026-11-23", title: "A business story", snippet: "in the body" },
     { id: "99", paper: "NYT", date: "2026-11-21", title: "Remote only, no section", snippet: "mentions business" },

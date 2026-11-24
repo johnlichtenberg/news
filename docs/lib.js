@@ -2,12 +2,125 @@
 
 const TZ = "America/New_York";
 export const PAPERS = ["NYT", "WSJ"];
-export const SECTION_ORDER = [
-  "World", "U.S.", "Politics", "Business", "Tech", "Science", "Health", "Opinion",
-  "Arts", "Books", "Sports", "Style", "Food", "Travel", "Real Estate", "Markets",
-  "Life & Arts", "Other",
+
+// Official section tabs, named and ordered like each paper's own site navigation.
+// NYT: 2026 masthead (U.S., World, Business, Arts, Lifestyle, Opinion) plus the
+// official section-menu items the site still uses (Politics and New York under U.S.,
+// Technology under Business, Books under Arts, Style/Food/Travel/Magazine under
+// Lifestyle, then Science, Climate, Health, The Athletic, Real Estate).
+export const NYT_SECTIONS = [
+  "U.S.", "Politics", "New York", "World", "Business", "Technology", "Arts", "Books",
+  "Lifestyle", "Style", "Food", "Travel", "Magazine", "Opinion", "Science", "Climate",
+  "Health", "Well", "The Athletic", "Real Estate", "Games", "Other",
 ];
-export const sectionRank = (s) => { const i = SECTION_ORDER.indexOf(s); return i < 0 ? 99 : i; };
+// WSJ: live top nav on wsj.com, with Science after that (a real section, not in the slim bar).
+export const WSJ_SECTIONS = [
+  "World", "Business", "U.S.", "Politics", "Economy", "Tech", "Markets & Finance",
+  "Opinion", "Arts", "Lifestyle", "Real Estate", "Personal Finance", "Health", "Style",
+  "Sports", "Science", "Other",
+];
+// Under All: one merged list. Shared names stay one tab; Tech/Technology and
+// Sports/The Athletic are aliases (see SECTION_ALIASES). Cards still show each
+// paper's own label.
+export const MERGED_SECTIONS = [
+  "U.S.", "Politics", "New York", "World", "Business", "Economy", "Technology",
+  "Markets & Finance", "Personal Finance", "Arts", "Books", "Lifestyle", "Style",
+  "Food", "Travel", "Magazine", "Opinion", "Science", "Climate", "Health", "Well",
+  "Sports", "Real Estate", "Games", "Other",
+];
+// Kept as a union for hash validation and older links.
+export const SECTION_ORDER = [...new Set([...MERGED_SECTIONS, ...NYT_SECTIONS, ...WSJ_SECTIONS])];
+
+// Aliases used when switching papers or viewing All. Keys are stored/official labels.
+export const SECTION_ALIASES = {
+  Tech: "Technology",
+  Technology: "Tech",
+  "The Athletic": "Sports",
+  Sports: "The Athletic",
+  Markets: "Markets & Finance",
+  "Markets & Finance": "Markets & Finance",
+  "Life & Arts": "Lifestyle",
+  Lifestyle: "Lifestyle",
+};
+
+// On a single paper, parent tabs include these official subsections (the way the
+// site's menus nest them). Stored labels stay the specific section. All-papers
+// view does not roll up, so Politics and U.S. stay distinct across both papers.
+export const SECTION_FAMILY = {
+  NYT: {
+    "U.S.": ["U.S.", "Politics", "New York"],
+    Business: ["Business", "Technology"],
+    Arts: ["Arts", "Books"],
+    Lifestyle: ["Lifestyle", "Style", "Food", "Travel", "Magazine", "Well"],
+    "The Athletic": ["The Athletic"],
+  },
+  WSJ: {
+    // Top-nav items are first-class on wsj.com (Economy, Tech, Personal Finance,
+    // Style and Lifestyle are separate). Only path-children are grouped here.
+    Opinion: ["Opinion"],
+    Business: ["Business"],
+  },
+};
+
+export const sectionRank = (s, paper = "All") => {
+  const order = paper === "NYT" ? NYT_SECTIONS : paper === "WSJ" ? WSJ_SECTIONS : MERGED_SECTIONS;
+  const i = order.indexOf(s);
+  return i < 0 ? 99 : i;
+};
+
+export function tabsForPaper(paper = "All") {
+  return paper === "NYT" ? NYT_SECTIONS : paper === "WSJ" ? WSJ_SECTIONS : MERGED_SECTIONS;
+}
+
+export function canonicalSection(name, paper = "All") {
+  const s = String(name || "");
+  if (!s || s === "All") return s || "All";
+  const tabs = tabsForPaper(paper);
+  if (tabs.includes(s)) return s;
+  const alias = SECTION_ALIASES[s];
+  if (alias && tabs.includes(alias)) return alias;
+  // Merged view uses the merged label for aliased pairs.
+  if (paper === "All") {
+    if (s === "Tech") return "Technology";
+    if (s === "The Athletic") return "Sports";
+    if (s === "Markets" || s === "Markets & Finance") return "Markets & Finance";
+    if (s === "Life & Arts") return "Lifestyle";
+  }
+  return "";
+}
+
+export function isKnownSection(name) {
+  return !!canonicalSection(name, "All") || NYT_SECTIONS.includes(name) || WSJ_SECTIONS.includes(name) || SECTION_ORDER.includes(name);
+}
+
+// When switching papers, keep the selection if that paper (or All) has an equivalent tab.
+export function resolveSection(selected, fromPaper, toPaper) {
+  if (!selected || selected === "All") return "All";
+  const next = canonicalSection(selected, toPaper);
+  return next || "All";
+}
+
+export function sectionGroup(tab, paper = "All") {
+  if (!tab || tab === "All") return null;
+  if (paper === "All") {
+    const key = canonicalSection(tab, "All") || tab;
+    const group = new Set([key, tab]);
+    if (key === "Technology") group.add("Tech");
+    if (key === "Sports") group.add("The Athletic");
+    if (key === "Markets & Finance") group.add("Markets");
+    if (key === "Lifestyle") group.add("Life & Arts");
+    return group;
+  }
+  const family = (SECTION_FAMILY[paper] || {})[tab];
+  return new Set(family && family.length ? family : [tab]);
+}
+
+export function sectionMatches(itemSection, tab, paper = "All") {
+  if (!tab || tab === "All") return true;
+  if (!itemSection) return false;
+  const group = sectionGroup(tab, paper);
+  return group ? group.has(itemSection) : itemSection === tab;
+}
 
 // ProQuest docview id of a library link ("" if none), as a digit string.
 export const docId = (link) => (/\/docview\/(\d+)/.exec(link || "") || [])[1] || "";
@@ -42,16 +155,17 @@ export function combineFeeds(results) {
 export function filterItems(items, paper = "All", section = "All") {
   return (items || []).filter((it) =>
     (paper === "All" || it.paper === paper) &&
-    (section === "All" || it.section === section));
+    sectionMatches(it.section, section, paper));
 }
 
-// Tabs to show for the current paper filter (All plus sections that have at least one item). Empty tabs are hidden.
+// Tabs to show for the current paper filter. Empty tabs are hidden. A parent tab
+// (e.g. NYT U.S.) appears when any of its official subsections has an item.
 export function sectionsFor(items, paper = "All") {
-  const set = new Set();
-  for (const it of items || []) {
-    if ((paper === "All" || it.paper === paper) && it.section) set.add(it.section);
-  }
-  return SECTION_ORDER.filter((s) => set.has(s));
+  const pool = (items || []).filter((it) => (paper === "All" || it.paper === paper) && it.section);
+  return tabsForPaper(paper).filter((tab) => {
+    if (tab === "Other") return pool.some((it) => it.section === "Other");
+    return pool.some((it) => sectionMatches(it.section, tab, paper));
+  });
 }
 
 
@@ -171,7 +285,7 @@ export function mergeSearchHits(headlineItems, hits, paper = "All", libraryLink,
     if (!hit) continue;
     if (paper !== "All" && hit.paper && hit.paper !== paper) continue;
     // Full-text hits without a known section only appear under All.
-    if (section !== "All" && hit.section && hit.section !== section) continue;
+    if (section !== "All" && hit.section && !sectionMatches(hit.section, section, paper)) continue;
     const id = String(hit.id || hit.doc || "");
     if (!id) continue;
     const existing = out.get(id);
@@ -188,6 +302,6 @@ export function mergeSearchHits(headlineItems, hits, paper = "All", libraryLink,
   }
   let items = [...out.values()];
   if (paper !== "All") items = items.filter((it) => it.paper === paper);
-  if (section !== "All") items = items.filter((it) => it.section === section);
+  if (section !== "All") items = items.filter((it) => sectionMatches(it.section, section, paper));
   return sortStories(items);
 }

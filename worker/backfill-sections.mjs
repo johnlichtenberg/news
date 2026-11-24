@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { FEEDS } from "./feeds.js";
-import { parseUrlset, parseRssEntries, indexFromEntries, applyCatalog, catalogMonthUrl, NEWS_SITEMAPS } from "./sections.js";
+import { parseUrlset, parseRssEntries, indexFromEntries, applyCatalog, catalogMonthUrl, NEWS_SITEMAPS, OFFICIAL_RSS } from "./sections.js";
 
 const NS = "64d4a2262065442ca10a11f79c670480";
 const write = process.argv.includes("--write");
@@ -32,23 +32,52 @@ const RSS = {
     "https://rss.nytimes.com/services/xml/rss/nyt/recent.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Africa.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/AsiaPacific.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Europe.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/MiddleEast.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/NYRegion.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Education.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Upshot.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Dealbook.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/PersonalTech.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Climate.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Space.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Weather.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Well.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Opinion.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Sunday-Review.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Books.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Books/Review.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/FashionandStyle.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Travel.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/RealEstate.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Well.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Movies.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Theater.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Music.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Dance.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/ArtandDesign.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Television.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/tmagazine.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Obituaries.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Weddings.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/YourMoney.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/EnergyEnvironment.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/MediaandAdvertising.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/SmallBusiness.xml",
   ],
   WSJ: [
     "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
@@ -88,7 +117,7 @@ if (!months.size) months.add(new Intl.DateTimeFormat("en-CA", { timeZone: "Ameri
 
 console.log("months", [...months].sort().join(", "));
 for (const paper of ["NYT", "WSJ"]) {
-  const urls = [NEWS_SITEMAPS[paper], ...[...months].map((m) => catalogMonthUrl(paper, m)), ...RSS[paper]];
+  const urls = [...new Set([NEWS_SITEMAPS[paper], ...[...months].map((m) => catalogMonthUrl(paper, m)), ...(OFFICIAL_RSS[paper] || []), ...RSS[paper]])];
   for (const url of urls) {
     try {
       const xml = await fetchText(url);
@@ -112,10 +141,11 @@ for (const feed of FEEDS) {
     catch (e) {
       if (!/not found|404/i.test(String(e.stderr || e.message))) throw e;
     }
-    const before = (cur.items || []).filter((i) => i && i.section).length;
+    const prevSec = new Map((cur.items || []).map((i) => [i.id || i.link, i.section || ""]));
+    const before = [...prevSec.values()].filter(Boolean).length;
     const items = applyCatalog(cur.items || [], catalogs);
-    // prefix-only leftovers already handled in applyCatalog/matchWithCatalog
     const after = items.filter((i) => i && i.section).length;
+    const relabeled = items.filter((it) => (it.section || "") !== (prevSec.get(it.id || it.link) || "")).length;
     counts.total += items.length;
     counts.filled += after;
     counts.unknown[feed.paper] += items.length - after;
@@ -123,8 +153,8 @@ for (const feed of FEEDS) {
       const sec = it.section || "(none)";
       counts[feed.paper][sec] = (counts[feed.paper][sec] || 0) + 1;
     }
-    console.log(`${key}: ${items.length} items, ${before} had a section, ${after} after match (${after - before} new)`);
-    if (write && after !== before) {
+    console.log(`${key}: ${items.length} items, ${before} had a section, ${after} after match, ${relabeled} changed`);
+    if (write && relabeled) {
       const out = `/tmp/news-${feed.id}-${month}.json`;
       writeFileSync(out, JSON.stringify({ updated: new Date().toISOString(), items }));
       wr(["kv", "key", "put", key, "--path", out, "--namespace-id", NS]);

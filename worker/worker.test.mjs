@@ -7,7 +7,7 @@ import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
 import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey, isAllowedConnect, originAllowed, docviewUrl, libraryLink as libLink, ezproxyConnectTicket } from "./proquest.js";
-import { sectionFromUrl, tabFor, titleVariants, prefixSection, parseUrlset, parseRssEntries, matchHeadline, buildIndex, applyCatalog, indexFromEntries, catalogMonthUrl, NEWS_SITEMAPS, _catalog, assignSection } from "./sections.js";
+import { sectionFromUrl, tabFor, titleVariants, prefixSection, bylineSection, parseUrlset, parseRssEntries, matchHeadline, buildIndex, applyCatalog, migrateSection, indexFromEntries, catalogMonthUrl, NEWS_SITEMAPS, _catalog, assignSection } from "./sections.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -158,7 +158,7 @@ const it = (id, date, title = "T" + id) => ({ paper: "NYT", title, date, link: L
 // --- worker ---
 let calls = [];
 const pqCallsOf = (arr = calls) => arr.filter((u) => /feeds\.proquest\.com/.test(u));
-const publicSectionUrl = (u) => /feeds\.proquest\.com|nytimes\.com\/sitemaps\/|wsj\.com\/(sitemaps|wsjsitemaps)\//.test(u);
+const publicSectionUrl = (u) => /feeds\.proquest\.com|nytimes\.com\/sitemaps\/|rss\.nytimes\.com\/|wsj\.com\/(sitemaps|wsjsitemaps)\/|feeds\.content\.dowjones\.io\/public\/rss\//.test(u);
 let upstream = (url) => new Response(url.endsWith("2310287") ? WSJ_XML : NYT_XML, { status: 200 });
 globalThis.fetch = async (url, init) => { calls.push(String(url)); return upstream(String(url), init); };
 const { default: worker, _test } = await import("./worker.js");
@@ -188,7 +188,7 @@ eq(kvPuts, 2, "first fetch stores this month's shard + index"); ok(kvStore.has(`
 eq(JSON.parse(kvStore.get(`hist:nyt-proquest:${M}`)).items.map((i) => i.id), ["3414243596", "3414243500"]);
 eq(j.months, [M]); eq(j.loaded, [M, prevMonth(M)]); eq(j.older, []);
 eq(pqCallsOf(calls), ["https://feeds.proquest.com/rss/2310267"]);
-ok(calls.every(publicSectionUrl), "feed refresh only fetches ProQuest and public section sitemaps");
+ok(calls.every(publicSectionUrl), "feed refresh only fetches ProQuest, public sitemaps, and official section RSS");
 ok(/max-age=300/.test(r.headers.get("Cache-Control")), "5-minute cache header");
 await worker.fetch(req("/feed/nyt-proquest"), env);
 eq(pqCallsOf(calls).length, 1, "second request served from 5-minute cache");
@@ -201,7 +201,7 @@ for (const p of ["/feed/nyt-top", "/feed/wsj-world", "/feed/evil", "/feed/https%
   r = await worker.fetch(req(p), env); eq(r.status, 404, p);
 }
 eq(pqCallsOf(calls).length, 2, "only the two ProQuest feeds are fetched (section sitemaps may also be loaded)");
-ok(calls.every(publicSectionUrl), "no fetches outside ProQuest and public sitemaps");
+ok(calls.every(publicSectionUrl), "no fetches outside ProQuest, public sitemaps, and official section RSS");
 
 r = await worker.fetch(req("/feeds", { origin: "https://evil.example" }), env); eq(r.status, 403);
 eq(r.headers.get("Access-Control-Allow-Origin"), ORIGIN, "never echoes other origins");
@@ -575,32 +575,38 @@ _test.rate.reset();
 // --- sections: papers' own URL paths, matching, storage ---
 {
   eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/technology/openai-engineer-secret-recordings.html", "NYT").raw, "technology");
-  eq(tabFor("NYT", "technology"), "Tech");
+  eq(tabFor("NYT", "technology"), "Technology");
   eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/us/politics/walter-willett-trump-harvard.html", "NYT").raw, "politics");
   eq(tabFor("NYT", sectionFromUrl("https://www.nytimes.com/2026/11/23/us/politics/x.html", "NYT").raw), "Politics");
   eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/us/elections/new-hampshire-presidential-primary.html", "NYT").raw, "politics");
   eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/nyregion/trump-conviction-appeal-federal-court.html", "NYT").raw, "nyregion");
-  eq(tabFor("NYT", "nyregion"), "U.S.");
-  eq(tabFor("NYT", "well"), "Health");
-  eq(tabFor("NYT", "climate"), "Science");
+  eq(tabFor("NYT", "nyregion"), "New York");
+  eq(tabFor("NYT", "well"), "Well");
+  eq(tabFor("NYT", "climate"), "Climate");
   eq(tabFor("NYT", "dining"), "Food");
   eq(tabFor("NYT", "briefing"), "Other");
   eq(sectionFromUrl("https://www.nytimes.com/athletic/7808248/2026/11/24/bengals-win/", "NYT").raw, "athletic");
-  eq(tabFor("NYT", "athletic"), "Sports");
+  eq(tabFor("NYT", "athletic"), "The Athletic");
   ok(!sectionFromUrl("https://www.nytimes.com/2026/11/23/espanol/foo.html", "NYT"), "NYT en Español URLs are ignored");
   eq(sectionFromUrl("https://www.wsj.com/tech/amazon-leo-starlink-rival-5bb0e6a0", "WSJ").raw, "tech");
   eq(tabFor("WSJ", "tech"), "Tech");
-  eq(tabFor("WSJ", "finance"), "Markets");
+  eq(tabFor("WSJ", "finance"), "Markets & Finance");
   eq(tabFor("WSJ", "us-news"), "U.S.");
   eq(tabFor("WSJ", "arts-culture"), "Arts");
-  eq(tabFor("WSJ", "lifestyle"), "Life & Arts");
-  eq(tabFor("WSJ", "personal-finance"), "Markets");
+  eq(tabFor("WSJ", "lifestyle"), "Lifestyle");
+  eq(tabFor("WSJ", "personal-finance"), "Personal Finance");
   eq(tabFor("WSJ", "articles"), "Other");
   eq(prefixSection("DealBook: Can Huang return to Nvidia?"), "Business");
-  eq(prefixSection("N.Y. Today: A councilwoman takes aim at a housing survey"), "U.S.");
+  eq(prefixSection("N.Y. Today: A councilwoman takes aim at a housing survey"), "New York");
   eq(prefixSection("Daily Briefing: Weil Gotshal Bankruptcy Chief Takes Team to Skadden"), "Other");
   eq(prefixSection("The Evening: Trump pressed for Huang’s return"), "Other");
   eq(prefixSection("Breaking news: House Democrat quits"), "", "breaking news is stripped, not assigned a desk");
+  eq(tabFor("WSJ", "economy"), "Economy");
+  eq(prefixSection("Climate: A new warning"), "Climate");
+  eq(bylineSection("Elon Musk Has Regrets: Michelle Goldberg", "NYT"), "Opinion");
+  eq(bylineSection("Elon Musk Has Regrets: Michelle Goldberg", "WSJ"), "", "columnist suffix is NYT Opinion only");
+  eq(bylineSection("A letter about the war: letters", "NYT"), "Opinion");
+
   ok(titleVariants("Breaking news: House Democrat quits").includes("House Democrat quits"));
   ok(titleVariants("Elon Musk Has Regrets: Michelle Goldberg").includes("Elon Musk Has Regrets"));
   eq(NEWS_SITEMAPS.NYT.includes("sitemaps/new/news.xml"), true);
@@ -619,7 +625,7 @@ _test.rate.reset();
   eq(parsed.length, 2);
   eq(parsed[0].raw, "technology"); eq(parsed[0].slug, "openai-engineer-secret-recordings");
   const idx = buildIndex(parsed);
-  eq(matchHeadline("OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say", "2026-11-23", "NYT", idx).section, "Tech");
+  eq(matchHeadline("OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say", "2026-11-23", "NYT", idx).section, "Technology");
   eq(matchHeadline("How a Scientist Behind the Mediterranean Diet Got Caught in Trump’s War on Harvard", "2026-11-23", "NYT", idx).section, "Politics");
   // slug match when the ProQuest title is close to the URL slug
   const slugIdx = buildIndex(parseUrlset(`<urlset><url><loc>https://www.wsj.com/tech/amazon-leo-starlink-rival-5bb0e6a0</loc><lastmod>2026-11-23T04:00:00Z</lastmod></url></urlset>`, "WSJ"));
@@ -631,7 +637,21 @@ _test.rate.reset();
     <link>https://www.wsj.com/finance/commodities-futures/gold-rises-amid-risk-on-sentiment-across-markets-abc12def</link>
     <pubDate>Tue, 24 Nov 2026 03:00:00 GMT</pubDate></item></channel></rss>`, "WSJ");
   eq(rss[0].raw, "finance");
-  eq(tabFor("WSJ", rss[0].raw), "Markets");
+  eq(tabFor("WSJ", rss[0].raw), "Markets & Finance");
+
+  eq(migrateSection("Tech", "NYT"), "Technology");
+  eq(migrateSection("Markets", "WSJ"), "Markets & Finance");
+  eq(migrateSection("Life & Arts", "WSJ"), "Lifestyle");
+  eq(migrateSection("U.S.", "NYT"), "U.S.", "ambiguous NYT U.S. is not assumed to be New York");
+  const cat = { NYT: idx, WSJ: slugIdx };
+  const rematch = applyCatalog([
+    { paper: "NYT", title: "OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say", date: "2026-11-23", section: "Tech" },
+    { paper: "NYT", title: "A leftover U.S. item with no catalog hit", date: "2026-11-23", section: "U.S." },
+    { paper: "WSJ", title: "Gold leftover", date: "2026-11-23", section: "Markets" },
+  ], cat);
+  eq(rematch[0].section, "Technology", "official URL match overwrites the old shared Tech label");
+  eq(rematch[1].section, "U.S.", "unmatched ambiguous label is kept");
+  eq(rematch[2].section, "Markets & Finance", "unambiguous Markets rename when no URL match");
 
   // mergeShard keeps and fills section; change detection includes it
   const withSec = mergeShard([], [{ ...it(200, "2026-11-18"), section: "Tech" }], [], T);
