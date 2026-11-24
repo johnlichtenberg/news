@@ -7,6 +7,7 @@ import { keepItem } from "./parse.js";
 import { mergeShard, purgeShard, storeBatch, readShard, readIndex, docviewId, changed, monthOf, prevMonth, isMonth } from "./history.js";
 import { normalizeId, normalizeText, TEXT_KEY, timingSafeEqual, rateLimited, SEARCH_LIMIT } from "./search.js";
 import { parseResults, parseSearchForm, buildSearchBody, parseCiteDate, classifyPaper, cleanTitle, snippetFrom, mergeLiveHits, looksLikeChallenge, looksLikeLogin, cookieHeader, collectCookies, cacheKey, isAllowedConnect, originAllowed, docviewUrl, libraryLink as libLink, ezproxyConnectTicket } from "./proquest.js";
+import { sectionFromUrl, tabFor, titleVariants, prefixSection, parseUrlset, parseRssEntries, matchHeadline, buildIndex, applyCatalog, indexFromEntries, catalogMonthUrl, NEWS_SITEMAPS, _catalog, assignSection } from "./sections.js";
 
 const ORIGIN = "https://johnlichtenberg.github.io";
 let n = 0;
@@ -156,6 +157,8 @@ const it = (id, date, title = "T" + id) => ({ paper: "NYT", title, date, link: L
 
 // --- worker ---
 let calls = [];
+const pqCallsOf = (arr = calls) => arr.filter((u) => /feeds\.proquest\.com/.test(u));
+const publicSectionUrl = (u) => /feeds\.proquest\.com|nytimes\.com\/sitemaps\/|wsj\.com\/(sitemaps|wsjsitemaps)\//.test(u);
 let upstream = (url) => new Response(url.endsWith("2310287") ? WSJ_XML : NYT_XML, { status: 200 });
 globalThis.fetch = async (url, init) => { calls.push(String(url)); return upstream(String(url), init); };
 const { default: worker, _test } = await import("./worker.js");
@@ -184,19 +187,21 @@ const M = monthOf(Date.now());
 eq(kvPuts, 2, "first fetch stores this month's shard + index"); ok(kvStore.has(`hist:nyt-proquest:${M}`));
 eq(JSON.parse(kvStore.get(`hist:nyt-proquest:${M}`)).items.map((i) => i.id), ["3414243596", "3414243500"]);
 eq(j.months, [M]); eq(j.loaded, [M, prevMonth(M)]); eq(j.older, []);
-eq(calls, ["https://feeds.proquest.com/rss/2310267"]);
+eq(pqCallsOf(calls), ["https://feeds.proquest.com/rss/2310267"]);
+ok(calls.every(publicSectionUrl), "feed refresh only fetches ProQuest and public section sitemaps");
 ok(/max-age=300/.test(r.headers.get("Cache-Control")), "5-minute cache header");
 await worker.fetch(req("/feed/nyt-proquest"), env);
-eq(calls.length, 1, "second request served from 5-minute cache");
+eq(pqCallsOf(calls).length, 1, "second request served from 5-minute cache");
 eq(kvPuts, 2, "no write from cache hit");
 r = await worker.fetch(req("/feed/wsj-proquest"), env); j = await r.json();
 eq(j.paper, "WSJ"); eq(j.items[0].title, "Nvidia Reports Faster Growth, Says Jensen Huang Won't Return as CEO");
-eq(calls.at(-1), "https://feeds.proquest.com/rss/2310287");
+eq(pqCallsOf(calls).at(-1), "https://feeds.proquest.com/rss/2310287");
 
 for (const p of ["/feed/nyt-top", "/feed/wsj-world", "/feed/evil", "/feed/https%3A%2F%2Fevil.example", "/feed?url=https://evil.example", "/"]) {
   r = await worker.fetch(req(p), env); eq(r.status, 404, p);
 }
-eq(calls.length, 2, "only the two ProQuest URLs are ever fetched");
+eq(pqCallsOf(calls).length, 2, "only the two ProQuest feeds are fetched (section sitemaps may also be loaded)");
+ok(calls.every(publicSectionUrl), "no fetches outside ProQuest and public sitemaps");
 
 r = await worker.fetch(req("/feeds", { origin: "https://evil.example" }), env); eq(r.status, 403);
 eq(r.headers.get("Access-Control-Allow-Origin"), ORIGIN, "never echoes other origins");
@@ -208,7 +213,7 @@ r = await worker.fetch(req("/feeds", { method: "OPTIONS", origin: "https://evil.
 // cron: refreshes both feeds (bypassing the 5-minute memo); unchanged feeds are not rewritten
 const putsBefore = kvPuts, callsBefore = calls.length;
 await worker.scheduled({}, env, { waitUntil() {} });
-eq(calls.length - callsBefore, 2, "cron fetched both feeds");
+eq(pqCallsOf(calls).length - pqCallsOf(calls.slice(0, callsBefore)).length, 2, "cron fetched both feeds");
 eq(kvPuts - putsBefore, 0, "unchanged feeds -> no KV writes");
 // a newer batch that no longer lists the old items: history keeps them
 const NYT_XML2 = `<rss><channel><item><title>ProQuest:Brand New</title><pubDate>Nov 19, 2026</pubDate><link>https://www.proquest.com/docview/3414299999</link></item></channel></rss>`;
@@ -564,6 +569,106 @@ eq(r.status, 302);
 eq(r.headers.get("Location"), LIB("3416786144"), "unsafe Location falls back to the library docview URL");
 globalThis.fetch = prevFetchGo;
 _test.rate.reset();
+
+
+
+// --- sections: papers' own URL paths, matching, storage ---
+{
+  eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/technology/openai-engineer-secret-recordings.html", "NYT").raw, "technology");
+  eq(tabFor("NYT", "technology"), "Tech");
+  eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/us/politics/walter-willett-trump-harvard.html", "NYT").raw, "politics");
+  eq(tabFor("NYT", sectionFromUrl("https://www.nytimes.com/2026/11/23/us/politics/x.html", "NYT").raw), "Politics");
+  eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/us/elections/new-hampshire-presidential-primary.html", "NYT").raw, "politics");
+  eq(sectionFromUrl("https://www.nytimes.com/2026/11/23/nyregion/trump-conviction-appeal-federal-court.html", "NYT").raw, "nyregion");
+  eq(tabFor("NYT", "nyregion"), "U.S.");
+  eq(tabFor("NYT", "well"), "Health");
+  eq(tabFor("NYT", "climate"), "Science");
+  eq(tabFor("NYT", "dining"), "Food");
+  eq(tabFor("NYT", "briefing"), "Other");
+  eq(sectionFromUrl("https://www.nytimes.com/athletic/7808248/2026/11/24/bengals-win/", "NYT").raw, "athletic");
+  eq(tabFor("NYT", "athletic"), "Sports");
+  ok(!sectionFromUrl("https://www.nytimes.com/2026/11/23/espanol/foo.html", "NYT"), "NYT en Español URLs are ignored");
+  eq(sectionFromUrl("https://www.wsj.com/tech/amazon-leo-starlink-rival-5bb0e6a0", "WSJ").raw, "tech");
+  eq(tabFor("WSJ", "tech"), "Tech");
+  eq(tabFor("WSJ", "finance"), "Markets");
+  eq(tabFor("WSJ", "us-news"), "U.S.");
+  eq(tabFor("WSJ", "arts-culture"), "Arts");
+  eq(tabFor("WSJ", "lifestyle"), "Life & Arts");
+  eq(tabFor("WSJ", "personal-finance"), "Markets");
+  eq(tabFor("WSJ", "articles"), "Other");
+  eq(prefixSection("DealBook: Can Huang return to Nvidia?"), "Business");
+  eq(prefixSection("N.Y. Today: A councilwoman takes aim at a housing survey"), "U.S.");
+  eq(prefixSection("Daily Briefing: Weil Gotshal Bankruptcy Chief Takes Team to Skadden"), "Other");
+  eq(prefixSection("The Evening: Trump pressed for Huang’s return"), "Other");
+  eq(prefixSection("Breaking news: House Democrat quits"), "", "breaking news is stripped, not assigned a desk");
+  ok(titleVariants("Breaking news: House Democrat quits").includes("House Democrat quits"));
+  ok(titleVariants("Elon Musk Has Regrets: Michelle Goldberg").includes("Elon Musk Has Regrets"));
+  eq(NEWS_SITEMAPS.NYT.includes("sitemaps/new/news.xml"), true);
+  eq(catalogMonthUrl("NYT", "2026-11"), "https://www.nytimes.com/sitemaps/new/sitemap-2026-11.xml.gz");
+  eq(catalogMonthUrl("WSJ", "2026-11"), "https://www.wsj.com/sitemaps/web/wsj/en/sitemap_wsj_en_m11_2026.xml");
+  eq(catalogMonthUrl("WSJ", "2026-09"), "https://www.wsj.com/sitemaps/web/wsj/en/sitemap_wsj_en_m9_2026.xml");
+
+  const nytNews = `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+    <url><loc>https://www.nytimes.com/2026/11/23/technology/openai-engineer-secret-recordings.html</loc>
+      <news:news><news:publication_date>2026-11-23T20:00:00Z</news:publication_date>
+      <news:title>OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say</news:title></news:news></url>
+    <url><loc>https://www.nytimes.com/2026/11/23/us/politics/walter-willett-trump-harvard.html</loc>
+      <news:news><news:title>How a Scientist Behind the Mediterranean Diet Got Caught in Trump’s War on Harvard</news:title></news:news></url>
+  </urlset>`;
+  const parsed = parseUrlset(nytNews, "NYT");
+  eq(parsed.length, 2);
+  eq(parsed[0].raw, "technology"); eq(parsed[0].slug, "openai-engineer-secret-recordings");
+  const idx = buildIndex(parsed);
+  eq(matchHeadline("OpenAI Engineer Secretly Recorded Dozens of Meetings, Prosecutors Say", "2026-11-23", "NYT", idx).section, "Tech");
+  eq(matchHeadline("How a Scientist Behind the Mediterranean Diet Got Caught in Trump’s War on Harvard", "2026-11-23", "NYT", idx).section, "Politics");
+  // slug match when the ProQuest title is close to the URL slug
+  const slugIdx = buildIndex(parseUrlset(`<urlset><url><loc>https://www.wsj.com/tech/amazon-leo-starlink-rival-5bb0e6a0</loc><lastmod>2026-11-23T04:00:00Z</lastmod></url></urlset>`, "WSJ"));
+  const slugHit = matchHeadline("Why Amazon's Rival to Starlink Is Struggling to Catch Up With SpaceX", "2026-11-23", "WSJ", slugIdx);
+  // may be slug-score or no match if too short; exact slug words should score
+  // Title has amazon, rival, starlink; slug has amazon, leo, starlink, rival — should match.
+  eq(slugHit && slugHit.section, "Tech");
+  const rss = parseRssEntries(`<rss><channel><item><title>Gold Rises Amid Risk-on Sentiment Across Markets</title>
+    <link>https://www.wsj.com/finance/commodities-futures/gold-rises-amid-risk-on-sentiment-across-markets-abc12def</link>
+    <pubDate>Tue, 24 Nov 2026 03:00:00 GMT</pubDate></item></channel></rss>`, "WSJ");
+  eq(rss[0].raw, "finance");
+  eq(tabFor("WSJ", rss[0].raw), "Markets");
+
+  // mergeShard keeps and fills section; change detection includes it
+  const withSec = mergeShard([], [{ ...it(200, "2026-11-18"), section: "Tech" }], [], T);
+  eq(withSec[0].section, "Tech");
+  const kept = mergeShard(withSec, [it(200, "2026-11-18")], [], T);
+  eq(kept[0].section, "Tech", "stored section kept when the live item has none yet");
+  const filled = mergeShard(kept, [{ ...it(200, "2026-11-18"), section: "Tech" }], [], T);
+  ok(!changed(kept, filled), "same section is not a write");
+  const added = mergeShard([{ ...it(201, "2026-11-18"), id: "201", seen: T }], [{ ...it(201, "2026-11-18"), section: "World" }], [], T);
+  eq(added[0].section, "World");
+  ok(changed([{ ...it(201, "2026-11-18"), id: "201", seen: T }], added), "newly assigned section triggers a write");
+}
+
+// /feed items expose section and never a publisher URL
+{
+  _catalog.reset();
+  _test.memo.clear();
+  const NYT_SM = `<?xml version="1.0"?><urlset xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+    <url><loc>https://www.nytimes.com/2026/11/18/us/politics/senate-vote.html</loc>
+      <news:title>Today's Headlines: Senate</news:title></url>
+  </urlset>`;
+  const prevUp = upstream;
+  upstream = (url) => {
+    if (url.includes("nytimes.com/sitemaps/")) return new Response(NYT_SM, { status: 200 });
+    if (url.includes("wsj.com/")) return new Response("<urlset></urlset>", { status: 200 });
+    return prevUp(url);
+  };
+  const env2 = { ALLOWED_ORIGIN: ORIGIN, NEWS_HISTORY: KV };
+  const rSec = await worker.fetch(req("/feed/nyt-proquest"), env2);
+  const jSec = await rSec.json();
+  ok(jSec.items.some((i) => i.title.includes("Senate") && i.section === "Politics"), "live item gets Politics from the NYT URL path");
+  ok(!JSON.stringify(jSec).includes("nytimes.com"), "public feed JSON has no publisher URLs");
+  ok(!JSON.stringify(jSec).includes("wsj.com"), "public feed JSON has no WSJ URLs");
+  upstream = prevUp;
+  _catalog.reset();
+  _test.memo.clear();
+}
 
 
 console.log(`worker tests: ${n} passed`);

@@ -2,6 +2,12 @@
 
 const TZ = "America/New_York";
 export const PAPERS = ["NYT", "WSJ"];
+export const SECTION_ORDER = [
+  "World", "U.S.", "Politics", "Business", "Tech", "Science", "Health", "Opinion",
+  "Arts", "Books", "Sports", "Style", "Food", "Travel", "Real Estate", "Markets",
+  "Life & Arts", "Other",
+];
+export const sectionRank = (s) => { const i = SECTION_ORDER.indexOf(s); return i < 0 ? 99 : i; };
 
 // ProQuest docview id of a library link ("" if none), as a digit string.
 export const docId = (link) => (/\/docview\/(\d+)/.exec(link || "") || [])[1] || "";
@@ -26,15 +32,28 @@ export function combineFeeds(results) {
     res.items.forEach((raw, i) => {
       if (!raw || !raw.title || !raw.link) return;
       out.push({ paper: raw.paper || res.paper, title: raw.title, link: raw.link, doc: docId(raw.link),
-        date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : "", rank, i });
+        date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : "", rank, i,
+        ...(raw.section ? { section: raw.section } : {}) });
     });
   }
   return sortStories(out);
 }
 
-export function filterItems(items, paper = "All") {
-  return paper === "All" ? items : items.filter((it) => it.paper === paper);
+export function filterItems(items, paper = "All", section = "All") {
+  return (items || []).filter((it) =>
+    (paper === "All" || it.paper === paper) &&
+    (section === "All" || it.section === section));
 }
+
+// Tabs to show for the current paper filter (All plus sections that have at least one item). Empty tabs are hidden.
+export function sectionsFor(items, paper = "All") {
+  const set = new Set();
+  for (const it of items || []) {
+    if ((paper === "All" || it.paper === paper) && it.section) set.add(it.section);
+  }
+  return SECTION_ORDER.filter((s) => set.has(s));
+}
+
 
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
@@ -140,7 +159,7 @@ const PAPERS_RANK = (paper) => { const i = PAPERS.indexOf(paper); return i < 0 ?
 // Merge client-side headline matches with /search hits (which may include body-only matches and snippets).
 // Remote-only hits are turned into page items (link is built from the docview id when missing).
 // Result is filtered by paper and sorted like the main list. Never copies a `text` field.
-export function mergeSearchHits(headlineItems, hits, paper = "All", libraryLink) {
+export function mergeSearchHits(headlineItems, hits, paper = "All", libraryLink, section = "All") {
   const out = new Map();
   for (const it of headlineItems || []) {
     if (!it) continue;
@@ -151,19 +170,24 @@ export function mergeSearchHits(headlineItems, hits, paper = "All", libraryLink)
   for (const hit of hits || []) {
     if (!hit) continue;
     if (paper !== "All" && hit.paper && hit.paper !== paper) continue;
+    // Full-text hits without a known section only appear under All.
+    if (section !== "All" && hit.section && hit.section !== section) continue;
     const id = String(hit.id || hit.doc || "");
     if (!id) continue;
     const existing = out.get(id);
     const snippet = typeof hit.snippet === "string" ? hit.snippet : "";
     if (existing) {
       if (snippet) existing.snippet = snippet;
+      if (!existing.section && hit.section) existing.section = hit.section;
       continue;
     }
     const link = hit.link || (libraryLink ? libraryLink(id) : "");
     if (!hit.title || !link) continue;
     out.set(id, { paper: hit.paper || "", title: hit.title, date: /^\d{4}-\d{2}-\d{2}$/.test(hit.date || "") ? hit.date : "",
-      link, doc: id, snippet, rank: PAPERS_RANK(hit.paper), i: 0 });
+      link, doc: id, snippet, rank: PAPERS_RANK(hit.paper), i: 0, ...(hit.section ? { section: hit.section } : {}) });
   }
-  const items = [...out.values()];
-  return paper === "All" ? sortStories(items) : sortStories(items.filter((it) => it.paper === paper));
+  let items = [...out.values()];
+  if (paper !== "All") items = items.filter((it) => it.paper === paper);
+  if (section !== "All") items = items.filter((it) => it.section === section);
+  return sortStories(items);
 }

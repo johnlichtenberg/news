@@ -81,7 +81,8 @@ export async function findHeadline(kv, id) {
       const it = items.find((i) => i && i.id === id);
       if (it && keep(it)) {
         const date = it.date || (Number.isFinite(it.seen) ? seenDay.format(it.seen) : "");
-        return { id, paper: it.paper || feed.paper, date, title: it.title, link: it.link || libraryLink(id), month: m, feed };
+        return { id, paper: it.paper || feed.paper, date, title: it.title, link: it.link || libraryLink(id), month: m, feed,
+          ...(it.section ? { section: it.section } : {}) };
       }
     }
   }
@@ -112,7 +113,8 @@ export async function loadHeadlines(kv) {
       for (const it of await readShard(kv, feed.id, m)) {
         if (!it || !it.id || !keep(it)) continue;
         const date = it.date || (Number.isFinite(it.seen) ? seenDay.format(it.seen) : "");
-        out.push({ id: it.id, paper: it.paper || feed.paper, date, title: it.title, link: it.link || libraryLink(it.id), month: m });
+        out.push({ id: it.id, paper: it.paper || feed.paper, date, title: it.title, link: it.link || libraryLink(it.id), month: m,
+          ...(it.section ? { section: it.section } : {}) });
       }
     }
   }
@@ -133,6 +135,7 @@ async function loadTexts(kv, months) {
 
 function publicHit(it, snippet) {
   const hit = { id: it.id, paper: it.paper, date: it.date || "", title: it.title, link: it.link || libraryLink(it.id) };
+  if (it.section) hit.section = it.section;
   if (snippet) hit.snippet = snippet;
   return hit;
 }

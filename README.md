@@ -10,7 +10,7 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
 - Each article shows paper · date, then the headline. No time is shown: the feed's pubDate timestamps are
   ProQuest's batch load times (both papers arrive in the same few-minute windows about every 80–90 minutes), not
   article publish times. The Worker reads pubDate as an ET day and keeps the timestamp internally as `ts`.
-  Newest date first; within a date, by ProQuest docview id, highest first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ.
+  Newest date first; within a date, by ProQuest docview id, highest first (numeric, NYT and WSJ mixed), in every filter and in loaded older months. Filters: All / NYT / WSJ, plus a row of section chips (World, U.S., Politics, Business, Tech, Science, Health, Opinion, Arts, Books, Sports, Style, Food, Travel, Real Estate, Markets, Life & Arts, and Other when needed). Empty section tabs are hidden. Paper, section and headline search combine. Each card shows paper · date · section (no times).
 - Each headline (and each search-result headline) opens `GET /go?id=<docview id>` on the Worker. The Worker signs
   into EZproxy with the `LIB_USER` / `LIB_PIN` secrets and redirects the browser to a short-lived `connect?session=`
   ticket, so the library session cookie is set in the browser and the article opens already signed in. The PIN is
@@ -23,7 +23,8 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   headline: Spanish function words, ¿/¡ and accented letters, after removing Spanish place names common in English
   headlines (Los Angeles, El Paso, La Niña…). The Worker drops them from the live feed, removes any already stored
   in the current month on the next refresh, hides them when serving any month, and the cron purges older months.
-- The public page and the repo store only headline, date and article link. Article text, when a fetcher
+- Section tabs come from the papers' own official URLs, not from ProQuest. The alert feeds have no section field and only link to docview pages, so the Worker matches each headline to public NYT and WSJ news sitemaps (and, on backfill, section RSS). The tab is the section path on nytimes.com or wsj.com (for example `/us/politics/` is Politics, `/finance/` is Markets). Items that cannot be matched appear only under All, unless a labeled newsletter prefix (DealBook, N.Y. Today, Daily Briefing…) names a desk. Publisher URLs never appear on the page or in the public API.
+- The public page and the repo store only headline, date, optional section and article link. Article text, when a fetcher
   has posted it, is kept privately in Workers KV (`text:<docviewId>`) and is used only for `/search`.
   See `TEXT-INGEST.md`. The RSS parser still never reads descriptions, abstracts, or full text from the feed.
 
@@ -38,18 +39,18 @@ A small personal headlines page: https://johnlichtenberg.github.io/news/
   Results are cached for 5 minutes.
   - `GET /feeds` lists the feed ids.
   - `GET /feed/<id>` refreshes the feed and returns this month's and last month's history
-    (`items`: paper, title, date, optional `ts` (ISO pubDate), link; `latest`: items in the live feed now; `months`: all stored months;
+    (`items`: paper, title, date, optional `ts` (ISO pubDate), optional `section`, link; `latest`: items in the live feed now; `months`: all stored months;
     `older`: months not included, for "Load older").
   - `GET /feed/<id>/<YYYY-MM>` returns one stored month (no upstream fetch).
   - `GET /search?q=...` (3–200 characters, rate limited, allowed origin only) runs a live ProQuest full-text search
     of NYT and WSJ (session cookie cached in KV, results cached for an hour, about 1 live search every few seconds,
-    daily cap of about 200 upstream requests). It returns only matches: `{ id, paper, date, title, link, snippet? }`.
+    daily cap of about 200 upstream requests). It returns only matches: `{ id, paper, date, title, link, snippet?, section? }`.
     `snippet` is at most ~200 characters around the match. NYT en Español results are dropped. If ProQuest fails,
     it falls back to stored headlines and sets `notice`. Full text is never returned.
   - `POST /text` (bearer token, see `TEXT-INGEST.md`) writes `{ id, text }` to KV as `text:<docviewId>`.
 - History (kept forever): Workers KV namespace `news-feeds-relay-NEWS_HISTORY` (binding `NEWS_HISTORY`,
   id `64d4a2262065442ca10a11f79c670480`; not x-text's `ARCHIVE`), sharded by month so no value nears KV's 25 MB limit:
-  - `hist:<feed id>:<YYYY-MM>`: `{ updated, items: [{ paper, title, date, ts?, link, id, seen }] }` (id = docview id, ts = pubDate timestamp
+  - `hist:<feed id>:<YYYY-MM>`: `{ updated, items: [{ paper, title, date, ts?, section?, link, id, seen }] }` (id = docview id, ts = pubDate timestamp
     when the feed gave one, filled in later if the live feed still has the item,
     seen = first-seen time). An item goes in the shard of the month (ET) it was first seen and is never duplicated.
   - `idx:<feed id>`: `{ updated, months: [newest first] }`.

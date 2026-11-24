@@ -1,7 +1,7 @@
 // node test/lib.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { combineFeeds, filterItems, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel, parseQuery, queryMatches, filterByQuery, snippetAround, mergeSearchHits } from "../docs/lib.js";
+import { combineFeeds, filterItems, sectionsFor, SECTION_ORDER, dayLabel, etToday, clockET, feedLists, nextOlderMonth, monthLabel, parseQuery, queryMatches, filterByQuery, snippetAround, mergeSearchHits } from "../docs/lib.js";
 import { parseProquest } from "../worker/parse.js";
 import { FEEDS } from "../worker/feeds.js";
 
@@ -143,8 +143,12 @@ const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8"
 ok(!/innerHTML|insertAdjacentHTML|document\.write/.test(app), "DOM built with textContent only");
 ok(/link\.rel = "noopener noreferrer"/.test(app), "article links use rel=noopener");
 ok(!/localStorage|sessionStorage|indexedDB|document\.cookie|clipboard/.test(app), "nothing stored or copied");
-ok(!/nytimes\.com|wsj\.com|section/i.test(app), "no publisher links or sections left");
-ok(!/id="sections"/.test(html), "section chips removed");
+ok(!/nytimes\.com|wsj\.com/.test(app + html), "no publisher links on the page");
+ok(/id="sections"/.test(html), "section chips under the paper chips");
+ok(/class="tabs sections"/.test(html), "section row is a scrollable tabs strip");
+ok(/data-section/.test(app) && /renderSectionTabs/.test(app), "section chips are rendered from stored sections");
+ok(/h\.set\("section"/.test(app) && /h\.get\("section"\)/.test(app), "selected section is remembered in the URL hash");
+ok(/el\("span", "section"/.test(app), "cards show the section next to paper and date");
 for (const p of ["All", "NYT", "WSJ"]) ok(html.includes(`data-paper="${p}"`), "paper filter " + p);
 for (const m of html.matchAll(/<a [^>]*>/g)) ok(/rel="noopener noreferrer"/.test(m[0]), "header link rel " + m[0]);
 ok(/Library \(sign in with card &amp; PIN\)/.test(html), "library sign-in note kept");
@@ -161,5 +165,45 @@ ok(!/LIB_PIN|LIB_USER/.test(app + html), "page has no library secrets");
 ok(/\/go\?id=/.test(app) && /articleHref/.test(app), "headline and search links go through /go");
 ok(/referrerPolicy = "no-referrer"/.test(app), "article links send no referrer");
 ok(!/localStorage|sessionStorage/.test(readFileSync(new URL("../docs/lib.js", import.meta.url), "utf8")), "lib stores nothing");
+
+
+// --- sections ---
+{
+  eq(SECTION_ORDER[0], "World");
+  eq(SECTION_ORDER.includes("Other"), true);
+  const listed = combineFeeds([
+    { paper: "NYT", items: [
+      { title: "A", date: "2026-11-23", link: L(30), section: "Politics" },
+      { title: "B", date: "2026-11-23", link: L(20), section: "Business" },
+      { title: "C", date: "2026-11-22", link: L(10) },
+    ]},
+    { paper: "WSJ", items: [
+      { title: "D", date: "2026-11-23", link: L(25), section: "Business" },
+      { title: "E", date: "2026-11-23", link: L(15), section: "Markets" },
+    ]},
+  ]);
+  eq(listed.map((i) => i.section || ""), ["Politics", "Business", "Business", "Markets", ""]);
+  eq(filterItems(listed, "All", "Business").map((i) => i.doc), ["25", "20"]);
+  eq(filterItems(listed, "NYT", "Business").map((i) => i.doc), ["20"]);
+  eq(filterItems(listed, "NYT", "Politics").map((i) => i.doc), ["30"]);
+  eq(filterItems(listed, "All", "World"), [], "empty section hidden by sectionsFor, and filters to none");
+  eq(filterItems(listed, "WSJ", "All").map((i) => i.doc), ["25", "15"]);
+  eq(filterItems(listed, "All", "Business").every((i) => i.section === "Business"), true);
+  // items with no section only appear under All
+  eq(filterItems(listed, "All", "All").map((i) => i.doc).includes("10"), true);
+  eq(filterItems(listed, "All", "Politics").map((i) => i.doc).includes("10"), false);
+  eq(sectionsFor(listed, "All"), ["Politics", "Business", "Markets"]);
+  eq(sectionsFor(listed, "NYT"), ["Politics", "Business"]);
+  eq(sectionsFor(listed, "WSJ"), ["Business", "Markets"]);
+  eq(sectionsFor([], "All"), []);
+  const merged = mergeSearchHits(filterItems(listed, "All", "Business"), [
+    { id: "20", paper: "NYT", date: "2026-11-23", title: "A business story", snippet: "in the body" },
+    { id: "99", paper: "NYT", date: "2026-11-21", title: "Remote only, no section", snippet: "mentions business" },
+    { id: "88", paper: "WSJ", date: "2026-11-21", title: "Remote with section", section: "Business", snippet: "also business" },
+  ], "All", L, "Business");
+  eq(merged.map((i) => i.doc), ["25", "20", "88"], "full-text hits without a section stay off a section tab");
+  ok(merged.find((i) => i.doc === "20").snippet.includes("in the body"));
+}
+
 
 console.log(`page tests: ${n} passed`);

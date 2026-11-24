@@ -1,4 +1,4 @@
-import { combineFeeds, filterItems, filterByQuery, mergeSearchHits, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel } from "./lib.js";
+import { combineFeeds, filterItems, filterByQuery, mergeSearchHits, dayLabel, clockET, feedLists, nextOlderMonth, monthLabel, sectionsFor, SECTION_ORDER } from "./lib.js";
 
 const RELAY = "https://news-feeds-relay.johnlichtenberg.workers.dev";
 const LIB_PREFIX = "https://library.access.arlingtonva.us/login?url=https://www.proquest.com/docview/";
@@ -15,7 +15,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 // results: feed id -> latest /feed/<id> response (this month + last month).
 // extra: feed id -> Map(month -> items) for months fetched with "Load older" (or all months, when searching).
-const state = { results: new Map(), extra: new Map(), items: [], paper: "All", q: "", hits: [], notice: "",
+const state = { results: new Map(), extra: new Map(), items: [], paper: "All", section: "All", q: "", hits: [], notice: "",
   loading: false, loadingOlder: false, loadingAllOlder: false, searching: false,
   loadedAt: 0, failed: [], total: 0 };
 
@@ -60,11 +60,17 @@ async function loadAllOlder() {
 }
 
 function readHash() {
-  const p = new URLSearchParams(location.hash.slice(1)).get("paper");
+  const h = new URLSearchParams(location.hash.slice(1));
+  const p = h.get("paper"), s = h.get("section");
   state.paper = p === "NYT" || p === "WSJ" ? p : "All";
+  state.section = s && SECTION_ORDER.includes(s) ? s : "All";
 }
 function writeHash() {
-  history.replaceState(null, "", state.paper === "All" ? location.pathname + location.search : "#paper=" + state.paper);
+  const h = new URLSearchParams();
+  if (state.paper !== "All") h.set("paper", state.paper);
+  if (state.section !== "All") h.set("section", state.section);
+  const next = h.toString() ? "#" + h.toString() : location.pathname + location.search;
+  history.replaceState(null, "", next);
 }
 
 function card(it, now) {
@@ -72,6 +78,7 @@ function card(it, now) {
   const meta = el("div", "meta");
   meta.append(el("span", "paper", it.paper));
   if (it.date) { const t = el("time", "when", dayLabel(it.date, now)); t.dateTime = it.date; meta.append(t); }
+  if (it.section) meta.append(el("span", "section", it.section));
   const h = el("h2");
   const link = el("a", null, it.title);
   link.href = articleHref(it); link.target = "_blank"; link.rel = "noopener noreferrer";
@@ -85,14 +92,44 @@ function card(it, now) {
 
 function visibleList() {
   const q = (state.q || "").trim();
-  let list = filterItems(state.items, state.paper);
+  let list = filterItems(state.items, state.paper, state.section);
   if (q) list = filterByQuery(list, q);
-  if (q.length >= 3) list = mergeSearchHits(list, state.hits, state.paper, libraryLink);
+  if (q.length >= 3) list = mergeSearchHits(list, state.hits, state.paper, libraryLink, state.section);
   return list;
+}
+
+function renderSectionTabs() {
+  const nav = $("#sections");
+  if (!nav) return;
+  const tabs = sectionsFor(state.items, state.paper);
+  if (state.section !== "All" && !tabs.includes(state.section)) {
+    state.section = "All";
+    writeHash();
+  }
+  nav.hidden = tabs.length === 0;
+  const labels = ["All", ...tabs];
+  const have = [...nav.querySelectorAll("button")].map((b) => b.dataset.section);
+  if (have.join("|") !== labels.join("|")) {
+    nav.replaceChildren(...labels.map((name) => {
+      const b = el("button");
+      b.type = "button";
+      b.dataset.section = name;
+      b.textContent = name;
+      return b;
+    }));
+  }
+  for (const b of nav.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.section === state.section));
+  }
+  const on = nav.querySelector('button[aria-pressed="true"]');
+  if (on && typeof on.scrollIntoView === "function") {
+    try { on.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "instant" }); } catch { /* ignore */ }
+  }
 }
 
 function render() {
   for (const b of document.querySelectorAll("#papers button")) b.setAttribute("aria-pressed", String(b.dataset.paper === state.paper));
+  renderSectionTabs();
   const now = Date.now();
   const q = (state.q || "").trim();
   const list = visibleList();
@@ -204,6 +241,10 @@ function init() {
   $("#papers").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-paper]"); if (!b) return;
     state.paper = b.dataset.paper; writeHash(); render(); scrollTo(0, 0);
+  });
+  $("#sections").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-section]"); if (!b) return;
+    state.section = b.dataset.section; writeHash(); render(); scrollTo(0, 0);
   });
   $("#q").addEventListener("input", onQueryInput);
   $("#q").addEventListener("keydown", (e) => { if (e.key === "Enter") submitSearch(e); });

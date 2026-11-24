@@ -7,9 +7,10 @@
 // GET /go?id=<docviewId> signs in via EZproxy and 302s the browser to a connect ticket (PIN never in the page).
 import { FEEDS } from "./feeds.js";
 import { parseProquest, keepItem } from "./parse.js";
-import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth } from "./history.js";
-import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
+import { storeBatch, readShard, readIndex, purgeShard, monthOf, isMonth, changed } from "./history.js";
+import { bearerToken, timingSafeEqual, rateLimited, normalizeId, normalizeText, putArticleText, runSearch, loadHeadlines, MIN_QUERY, MAX_QUERY, MAX_TEXT, _rate } from "./search.js";
 import { liveSearch, _live, ezproxyConnectTicket, originAllowed, libraryLink as libraryGoFallback } from "./proquest.js";
+import { loadCatalog, applyCatalog } from "./sections.js";
 
 const TTL = 300; // seconds
 const BY_ID = new Map(FEEDS.map((f) => [f.id, f]));
@@ -35,6 +36,28 @@ function clientKey(request) {
   return request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "anon";
 }
 
+
+async function enrichSearchSections(env, items) {
+  if (!items || !items.length) return items || [];
+  const byId = new Map();
+  try {
+    if (env.NEWS_HISTORY) {
+      for (const h of await loadHeadlines(env.NEWS_HISTORY)) if (h && h.id && h.section) byId.set(String(h.id), h.section);
+    }
+  } catch { /* headlines unavailable */ }
+  let catalog = null;
+  try { catalog = await loadCatalog(env); } catch { catalog = null; }
+  return items.map((it) => {
+    if (!it || it.section) return it;
+    if (it.id && byId.get(String(it.id))) return { ...it, section: byId.get(String(it.id)) };
+    if (catalog && catalog.ok) {
+      const filled = applyCatalog([it], catalog)[0];
+      if (filled && filled.section) return filled;
+    }
+    return it;
+  });
+}
+
 async function handleSearch(request, url, env, h) {
   const q = (url.searchParams.get("q") || "").trim();
   if (q.length < MIN_QUERY || q.length > MAX_QUERY) {
@@ -48,7 +71,8 @@ async function handleSearch(request, url, env, h) {
   try { live = await liveSearch(env, q); }
   catch { live = { ok: false, items: [], notice: "Full-text search is unavailable; showing headlines." }; }
   if (live && live.ok) {
-    return json({ ok: true, q, items: live.items, source: "proquest",
+    const items = await enrichSearchSections(env, live.items);
+    return json({ ok: true, q, items, source: "proquest",
       ...(live.cached ? { cached: true } : {}), ...(live.notice ? { notice: live.notice } : {}) }, 200, h, 0);
   }
   const items = env.NEWS_HISTORY ? await runSearch(env.NEWS_HISTORY, q) : [];
@@ -109,8 +133,9 @@ async function handlePostText(request, env, h) {
 // Items stored while the feed's dates could not be read fall back to the ET day they were first seen.
 const seenDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
 // ts (ISO pubDate timestamp) is included only when the feed gave one.
-const publicItems = (items) => items.map(({ paper, title, date, ts, link, seen }) =>
-  ({ paper, title, date: date || (Number.isFinite(seen) ? seenDay.format(seen) : null), ...(ts ? { ts } : {}), link }));
+const publicItems = (items) => items.map(({ paper, title, date, ts, section, link, seen }) =>
+  ({ paper, title, date: date || (Number.isFinite(seen) ? seenDay.format(seen) : null), ...(ts ? { ts } : {}),
+    ...(section ? { section } : {}), link }));
 
 // Fetch one feed, merge into history (writes only the current month's shard, only if changed) and return
 // the recent history: this month's and last month's shards, plus the list of all stored months.
@@ -129,10 +154,23 @@ export async function refreshFeed(feed, env, now = Date.now(), { force = false }
   } catch (e) {
     error = String(e.message || e).slice(0, 100);
   }
+  // Section tabs come from the papers' public sitemaps (URL path), cached in KV. Never fetched from paywalled pages.
+  let catalog = null;
+  try { catalog = await loadCatalog(env, now); } catch { catalog = null; }
+  if (fresh && catalog && catalog.ok) fresh = applyCatalog(fresh, catalog);
   let st;
   try {
     st = await storeBatch(kv, feed.id, fresh, now, keepItem(feed));
     stats.writes += st.writes;
+    if (kv && catalog && catalog.ok && st.current && st.current.some((it) => it && !it.section)) {
+      const filled = applyCatalog(st.current, catalog);
+      if (changed(st.current, filled)) {
+        await kv.put("hist:" + feed.id + ":" + st.month, JSON.stringify({ updated: new Date(now).toISOString(), items: filled }));
+        st.current = filled;
+        st.writes = (st.writes || 0) + 1;
+        stats.writes++;
+      }
+    }
   } catch (e) {
     error = error || "history write failed";
     st = { months: [], month: monthOf(now), current: fresh || [], previous: [], failed: true };
